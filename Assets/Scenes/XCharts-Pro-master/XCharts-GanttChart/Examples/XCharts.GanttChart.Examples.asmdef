@@ -1,0 +1,15 @@
+{
+    "name": "XCharts.GanttChart.Examples",
+    "references": [
+        "XCharts.Runtime",
+        "XCharts.GanttChart.Runtime"
+    ],
+    "optionalUnityReferences": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": []
+}

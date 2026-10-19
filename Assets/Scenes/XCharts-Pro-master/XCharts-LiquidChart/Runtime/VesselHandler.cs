@@ -1,0 +1,25 @@
+
+
+using System;
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace XCharts.Runtime.Liquids
+{
+    [UnityEngine.Scripting.Preserve]
+    internal sealed class VesselHandler : MainComponentHandler<Vessel>
+    {
+        public override void Update()
+        {
+            base.Update();
+            if (chart.isPointerInChart)
+            {
+                component.context.isPointerEnter = false;
+                return;
+            }
+            var vessel = component;
+            vessel.context.isPointerEnter = vessel.show
+                && Vector3.Distance(vessel.context.center, chart.pointerPos) <= vessel.context.radius;
+        }
+    }
+}

@@ -1,0 +1,15 @@
+{
+    "name": "XCharts.GraphChart.Examples",
+    "references": [
+        "XCharts.Runtime",
+        "XCharts.GraphChart.Runtime"
+    ],
+    "optionalUnityReferences": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": []
+}

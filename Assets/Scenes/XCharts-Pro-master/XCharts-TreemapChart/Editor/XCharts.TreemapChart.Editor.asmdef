@@ -1,0 +1,19 @@
+{
+    "name": "XCharts.TreemapChart.Editor",
+    "references": [
+        "XCharts.Editor",
+        "XCharts.Runtime",
+        "XCharts.TreemapChart.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

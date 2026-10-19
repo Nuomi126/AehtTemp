@@ -1,0 +1,19 @@
+{
+    "name": "XCharts.FunnelChart.Editor",
+    "references": [
+        "XCharts.Editor",
+        "XCharts.Runtime",
+        "XCharts.FunnelChart.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

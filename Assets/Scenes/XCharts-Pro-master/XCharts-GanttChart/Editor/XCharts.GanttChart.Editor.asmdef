@@ -1,0 +1,19 @@
+{
+    "name": "XCharts.GanttChart.Editor",
+    "references": [
+        "XCharts.Editor",
+        "XCharts.Runtime",
+        "XCharts.GanttChart.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

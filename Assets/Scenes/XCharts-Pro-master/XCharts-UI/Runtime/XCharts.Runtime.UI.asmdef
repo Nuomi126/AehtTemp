@@ -1,0 +1,8 @@
+{
+    "name": "XCharts.Runtime.UI",
+    "references": [
+        "XCharts.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": []
+}

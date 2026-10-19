@@ -1,0 +1,12 @@
+{
+    "name": "XCharts.Editor.UI",
+    "references": [
+        "XCharts.Editor",
+        "XCharts.Runtime",
+        "XCharts.Runtime.UI"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": []
+}

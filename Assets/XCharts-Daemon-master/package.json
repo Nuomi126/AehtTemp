@@ -1,0 +1,14 @@
+{
+  "name": "com.monitor1394.xcharts.daemon",
+  "displayName": "XCharts-Daemon",
+  "version": "1.0.1",
+  "unity": "2018.3",
+  "description": "A daemon that ensures proper compilation after a version update for XCharts.",
+  "keywords": [
+    "unity",
+    "xcharts",
+    "daemon"
+  ],
+  "category": "chart",
+  "author": "monitor1394"
+}

@@ -1,0 +1,19 @@
+{
+    "name": "XCharts.PyramidChart.Editor",
+    "references": [
+        "XCharts.Editor",
+        "XCharts.Runtime",
+        "XCharts.PyramidChart.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

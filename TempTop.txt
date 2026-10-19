@@ -1,0 +1,221 @@
+using UnityEngine;
+using System.Collections.Generic;
+using UnityEngine.Events;
+using UnityEngine.SceneManagement;
+using UnityEngine.UI; // 添加UI命名空间用于Button
+using XCharts.Runtime.UI;
+using XCharts.Runtime;
+using Newtonsoft.Json;
+using System.Text;
+using UnityEngine.Networking;
+using System;
+using TMPro; // 引入TextMeshPro命名空间
+using XCharts.UI.Demo; // 引入StatisticsReportTable所在的命名空间
+
+#if dUI_TextMeshPro && UNITY_2021_2_OR_NEWER
+using UnityEngine.TextCore.LowLevel; // TextMeshPro的GlyphRenderMode等类型
+#endif
+
+/// <summary>
+/// 统计报表管理器
+/// 负责获取统计报表数据并填充表格
+/// Updated: 2026-01-14 - Enforced Frame 71 and Singleton
+/// </summary>
+public class StatisticsReportManager : MonoBehaviour
+{
+    #region 单例模式
+    private static StatisticsReportManager _instance;
+    public static StatisticsReportManager Instance
+    {
+        get
+        {
+            if (_instance == null)
+            {
+                _instance = FindObjectOfType<StatisticsReportManager>();
+                
+                if (_instance == null)
+                {
+                    GameObject go = new GameObject("StatisticsReportManager");
+                    _instance = go.AddComponent<StatisticsReportManager>();
+                }
+            }
+            return _instance;
+        }
+    }
+    #endregion
+
+    #region Inspector 配置
+    [Header("表格组件引用")]
+    [SerializeField] private UITable voltageTable;      // 电压表格
+    [SerializeField] private UITable efficiencyTable;   // 效应表格
+    [SerializeField] private UITable feedingTable;      // 下料表格
+    [SerializeField] private UITable needleTable;       // 针摆表格
+    [SerializeField] private UITable processTable;      // 工艺表格
+    [SerializeField] private UITable summaryTable;      // 底部统计表格
+    
+    [Header("Tab按钮引用")]
+    [SerializeField] private Button btnDianya;          // 电压按钮
+    [SerializeField] private Button btnXiaoying;        // 效应按钮
+    [SerializeField] private Button btnXialiao;         // 下料按钮
+    [SerializeField] private Button btnZhenbai;         // 针摆按钮
+    [SerializeField] private Button btnGongyi;          // 工艺按钮
+    
+    [Header("按钮颜色")]
+    [SerializeField] private Color normalColor = new Color(0.9f, 0.9f, 0.9f);
+    [SerializeField] private Color selectedColor = new Color(0.3f, 0.8f, 1f);
+    
+    [Header("字体设置")]
+    [SerializeField] public TMP_FontAsset tableFont;    // 用于显示中文的字体
+    
+    // 自动查找UI引用
+    private void Awake()
+    {
+        // 优先使用配置好的 tongjiManager 作为单例
+        if (gameObject.name == "tongjiManager")
+        {
+            // 如果已有其他实例，销毁旧实例，使用 tongjiManager
+            if (_instance != null && _instance != this)
+            {
+                Debug.LogWarning($"[StatisticsReportManager] 销毁旧实例 ({_instance.gameObject.name})，使用 tongjiManager");
+                Destroy(_instance.gameObject);
+            }
+            _instance = this;
+            Debug.Log("[StatisticsReportManager] ? tongjiManager 成为单例实例");
+        }
+        else if (_instance == null)
+        {
+            // 如果还没有实例，当前对象成为单例
+            _instance = this;
+            Debug.LogWarning($"[StatisticsReportManager] {gameObject.name} 成为单例（警告：应该使用 tongjiManager）");
+        }
+        else
+        {
+            // 已有单例且当前不是 tongjiManager，销毁自己
+            Debug.LogWarning($"[StatisticsReportManager] 检测到重复实例 ({gameObject.name})，正在销毁...");
+            Destroy(gameObject);
+            return;
+        }
+        
+        // ? 移除 DontDestroyOnLoad，让Manager随场景加载/销毁，确保按钮引用始终正确
+        // 打印当前表格引用状态
+        Debug.Log($"[Awake] 表格引用状态检查:");
+        Debug.Log($"  voltageTable: {(voltageTable != null ? voltageTable.name : "NULL")}");
+        Debug.Log($"  efficiencyTable: {(efficiencyTable != null ? efficiencyTable.name : "NULL")}");
+        Debug.Log($"  feedingTable: {(feedingTable != null ? feedingTable.name : "NULL")}");
+        Debug.Log($"  needleTable: {(needleTable != null ? needleTable.name : "NULL")}");
+        Debug.Log($"  processTable: {(processTable != null ? processTable.name : "NULL")}");
+        
+        // 自动查找缺失的表格引用
+        if (voltageTable == null)
+        {
+            var go = GameObject.Find("UITable_Voltage");
+            if (go == null) go = GameObject.Find("Table_dy");
+            if (go != null)
+            {
+                voltageTable = go.GetComponent<UITable>();
+                Debug.Log($"  ? 自动找到 voltageTable: {go.name}");
+            }
+        }
+        
+        if (efficiencyTable == null)
+        {
+            var go = GameObject.Find("UITable_Effect");
+            if (go == null) go = GameObject.Find("Table_xy");
+            if (go != null)
+            {
+                efficiencyTable = go.GetComponent<UITable>();
+                Debug.Log($"  ? 自动找到 efficiencyTable: {go.name}");
+            }
+            else
+            {
+                Debug.LogError("  ? 找不到效应表格 UITable_Effect!");
+            }
+        }
+        
+        if (feedingTable == null)
+        {
+            var go = GameObject.Find("UITable_Feeding");
+            if (go == null) go = GameObject.Find("Table_xl");
+            if (go != null)
+            {
+                feedingTable = go.GetComponent<UITable>();
+                Debug.Log($"  ? 自动找到 feedingTable: {go.name}");
+            }
+        }
+        
+        if (needleTable == null)
+        {
+            var go = GameObject.Find("UITable_Needle");
+            if (go != null)
+            {
+                needleTable = go.GetComponent<UITable>();
+                Debug.Log($"  ? 自动找到 needleTable: {go.name}");
+            }
+        }
+        
+        if (processTable == null)
+        {
+            var go = GameObject.Find("UITable_Process");
+            if (go != null)
+            {
+                processTable = go.GetComponent<UITable>();
+                Debug.Log($"  ? 自动找到 processTable: {go.name}");
+            }
+        }
+        
+        if (summaryTable == null)
+        {
+            var go = GameObject.Find("UITable_Summary");
+            if (go != null)
+            {
+                summaryTable = go.GetComponent<UITable>();
+                Debug.Log($"  ? 自动找到 summaryTable: {go.name}");
+            }
+        }
+        // 尝试从StatisticsReportTable获取字体
+        var tableUI = FindObjectOfType<StatisticsReportTable>();
+        if (tableUI != null)
+        {
+            // 通过反射获取私有字段 customTMPFont (如果需要)，或者假设它已经赋值给了我们
+            // 这里我们尝试查找场景中所有字体，找到一个包含中文字符的
+        }
+
+        // 字体回退策略
+        if (tableFont == null || tableFont.name.Contains("Alibaba") || tableFont.name.Contains("Liberation")) 
+        {
+            // 1. 尝试查找 FangZhengShuSong (方正书宋)
+            var fonts = Resources.FindObjectsOfTypeAll<TMP_FontAsset>();
+            foreach (var font in fonts)
+            {
+                if (font.name.Contains("FangZheng") || font.name.Contains("msyh") || font.name.Contains("Deng"))
+                {
+                    tableFont = font;
+                    Debug.Log($"? 自动切换字体为: {font.name}");
+                    break;
+                }
+            }
+        }
+        
+        // 如果使用Alibaba字体，创建动态TMP字体来自动补字
+#if dUI_TextMeshPro
+        if (tableFont != null && tableFont.name.Contains("Alibaba"))
+        {
+            var runtimeFont = GetOrCreateRuntimeAlibabaTMPFont();
+            if (runtimeFont != null)
+            {
+                tableFont = runtimeFont;
+                Debug.Log("? StatisticsReportManager: 已切换到动态TMP字体（支持自动补字）");
+            }
+        }
+#endif
+    }
+    
+    [Header("API 设置")]
+    [SerializeField] private string apiUrl = "http://183.214.222.76:9000/api/Home/GetRemoteDataFromAlwit";
+    [SerializeField] private string electrolyticCompanyId = "1033";
+    [SerializeField] public string defaultTestSlot = "1001";  // 改为public以便其他组件访问
+
+    [Header("表格样式配置")]
+    [SerializeField] private Color32 headerBgColor = new Color32(70, 130, 180, 255);
+    [SerializeField] private Color32 headerTextColor = new Color32(255, 255, 255, 255);
+

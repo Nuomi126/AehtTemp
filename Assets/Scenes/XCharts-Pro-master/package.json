@@ -1,0 +1,27 @@
+{
+  "name": "com.monitor1394.xchartspro",
+  "displayName": "XCharts Pro",
+  "version": "3.13.0",
+  "unity": "2018.3",
+  "description": "Full version of XCharts with all extended components and extended charts.",
+  "keywords": [
+    "chart",
+    "charts",
+    "graph",
+    "unity-chart",
+    "data-visualization"
+  ],
+  "category": "chart",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/XCharts-Team/XCharts-Pro.git"
+  },
+  "author": "monitor1394",
+  "samples":[
+    {
+      "displayName": "Demo",
+      "description": "XCharts Demo",
+      "path": "XCharts-Demo~"
+    }
+  ]
+}

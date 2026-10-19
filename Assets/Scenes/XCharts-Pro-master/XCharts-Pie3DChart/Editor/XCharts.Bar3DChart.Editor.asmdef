@@ -1,0 +1,19 @@
+{
+    "name": "XCharts.Pie3DChart.Editor",
+    "references": [
+        "XCharts.Editor",
+        "XCharts.Runtime",
+        "XCharts.Pie3DChart.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}

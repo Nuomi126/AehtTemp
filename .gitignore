@@ -1,0 +1,16 @@
+Library/
+Temp/
+Obj/
+obj/
+Build/
+Builds/
+Logs/
+UserSettings/
+MemoryCaptures/
+.vs/
+*.csproj
+*.sln
+.DS_Store
+Thumbs.db
+Aeh_BurstDebugInformation_DoNotShip/
+**/BurstDebugInformation_DoNotShip/

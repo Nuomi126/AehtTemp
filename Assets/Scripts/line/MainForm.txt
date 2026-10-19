@@ -1,0 +1,246 @@
+﻿using System;
+using System.Collections.Generic;
+using System.ComponentModel;
+using System.Data;
+using System.Drawing;
+using System.Linq;
+using System.Security;
+using System.Text;
+using System.Threading.Tasks;
+using System.Web;
+using System.Windows.Forms;
+using System.Web.Script.Serialization;
+using System.Net;
+using System.IO;
+using System.Security.Policy;
+
+namespace WebAPITest
+{
+    public partial class MainForm : Form
+    {
+        private int m_postCounter = 0;
+        private System.Windows.Forms.Timer tmrMainInfoRefresh = new System.Windows.Forms.Timer();
+
+        public MainForm()
+        {
+            InitializeComponent();
+
+            this.tmrMainInfoRefresh.Interval = 2000;
+            this.tmrMainInfoRefresh.Enabled = false;
+            this.tmrMainInfoRefresh.Tick += new EventHandler(tmrMainInfoRefresh_Tick);
+
+        }
+
+        private void tmrMainInfoRefresh_Tick(object sender, EventArgs e)
+        {
+            try
+            {
+                WebAPIPostHelper();
+            }
+            catch
+            {
+            }
+            finally
+            {
+            }
+        }
+
+        private void WebAPIPostHelper()
+        {
+            string tmpInfo = "";
+            int jk = 0;
+            int offset = 0;
+            bool tmpSymbol = false;
+
+            this.lblInfo.Text = "------";
+
+            //【1】定义要使用的URL
+            string url = "http://183.214.222.76:9000/api/Home/GetRemoteDataFromAlwit";
+
+            //【2】封装要传递的数据，需要以JSON格式，并且要做编码规范（保证不会出现中文乱码）
+            //电解企业标识 + "-" + 帧类型 + "-" + 槽号
+            //帧类型：1—主界面实时信息（2秒）；2—分区监控实时信息（2秒）；
+            //3—单槽实时信息（2秒）；4—单槽10分钟动态曲线（2秒）；5—单槽阳极电流实时信息（2秒）；
+            //6—单槽10分钟阳极电流动态曲线（2秒）；7—单槽全槽温度实时信息（2秒）；8—单槽10分钟全槽温度动态曲线（2秒）；
+            string test = "1033-8-1001";
+            string jsonData = new JavaScriptSerializer().Serialize(test);//需要空间：System.Web.Script.Serialization
+            byte[] byteArray = Encoding.UTF8.GetBytes(jsonData);
+
+            //【3】创建请求对象，并设置相关的属性，命名空间：System.Net
+            WebRequest webRequest = WebRequest.Create(url);
+            webRequest.Method = "post";
+            webRequest.ContentType = "application/json";
+            webRequest.ContentLength = byteArray.Length;
+
+            //【4】获取字节流对象，并向流中写入数据（请求对象与流对象关联）
+            Stream byteStream = webRequest.GetRequestStream();
+            byteStream.Write(byteArray, 0, byteArray.Length);
+            byteStream.Close();
+
+            //【5】创建相应对象
+            HttpWebResponse webResponse = (HttpWebResponse)webRequest.GetResponse();
+
+            //【7】如果请求成功，则读取所有数据
+            if (webResponse.StatusCode == HttpStatusCode.OK)
+            {
+                //7.1 获取返回的数据流
+                byteStream = webResponse.GetResponseStream();
+                //7.2 根据返回的数据流创建读取器
+                StreamReader reader = new StreamReader(byteStream);
+                //7.3 读取所有数据
+                string readerContentFromServer = reader.ReadToEnd();
+
+                //显示结果
+                //string[] splitText = readerContentFromServer.Split('-');
+
+                int pos = readerContentFromServer.IndexOf('\"');//去掉字符串开始和结尾的转义字符
+                if (pos == 0)
+                {
+                    string tmpText = readerContentFromServer.Substring(1, readerContentFromServer.Length - 2);
+                    byte[] tmpBuffer = Convert.FromBase64String(tmpText);
+                    this.lblInfo.Text = tmpBuffer.Length.ToString();
+
+                    if (tmpBuffer != null)
+                    {
+                        jk = tmpBuffer.Length / 32;
+                        if(jk > 30)
+                        {
+                            jk = 30;
+                            tmpSymbol = true;
+                        }
+                        for (int j = 0; j < jk; j++)
+                        {
+                            for (int jt = 0; jt < 32; jt++)
+                            {
+                                offset = j * 32 + jt;
+                                tmpInfo = tmpInfo + tmpBuffer[offset].ToString().ToString() + ",";
+                            }
+
+                            tmpInfo = tmpInfo + Environment.NewLine;
+
+                        }
+
+                        //----------------//
+                        if (tmpSymbol == false)
+                        {
+                            offset = jk * 32;
+                            jk = tmpBuffer.Length % 32;
+                            if (jk != 0)
+                            {
+                                for (int j = 0; j < jk; j++)
+                                {
+                                    tmpInfo = tmpInfo + tmpBuffer[offset + j].ToString().Trim() + ",";
+                                }
+                            }
+
+                        }
+
+                        this.lblWebInfo.Text = tmpInfo;
+
+                    }
+
+                    //this.m_postCounter = this.m_postCounter + 1;
+                    //float tmpData = 0;
+                    //string tempText = "";
+                    //tmpData = tmpBuffer[18];
+                    //tmpData = (tmpData * 256 + tmpBuffer[19]) / 10;
+                    //tempText = tmpData.ToString("F1") + " V---";
+                    //if (tmpBuffer.Length > 22)
+                    //{
+                    //    tmpData = tmpBuffer[20];
+                    //    tmpData = (tmpData * 256 + tmpBuffer[21]) / 10;
+                    //    tempText = tempText + tmpData.ToString("F1") + " kA";
+                    //    this.lblCounter.Text = tempText;//this.m_postCounter.ToString();
+                    //}
+                }
+            }
+            else
+            {
+                //可以自己进一步处理
+
+            }
+
+        }
+
+        private void btnCallAPI_Click(object sender, EventArgs e)
+        {
+            //this.m_postCounter = 0;
+            //this.tmrMainInfoRefresh.Enabled = true;
+            WebAPIPostHelper();
+        }
+
+        private void btnCallGet_Click(object sender, EventArgs e)
+        {
+            //【1】定义要使用的URL
+            string url = "http://183.214.222.76:9000/api/Home/GetPlantProperty?para=1005-1";
+
+            HttpWebRequest webRequest = (HttpWebRequest)WebRequest.Create(url);
+            webRequest.Method = "GET";
+            webRequest.ContentType = "application/json";
+            webRequest.Accept = "application/json";
+            //webRequest.Headers.Add("Authorization", GlobalVariable.NowLoginUser.JwtKey);
+            HttpWebResponse webResponse = (HttpWebResponse)webRequest.GetResponse();
+            StreamReader reader = new StreamReader(webResponse.GetResponseStream(), Encoding.UTF8);
+            String res = reader.ReadToEnd();
+            reader.Close();
+
+        }
+
+        private void btnConfigData_Click(object sender, EventArgs e)
+        {
+            //【1】定义要使用的URL
+            string url = "http://183.214.222.76:9000/api/Home/GetRemoteDataFromAlwit";
+
+            //【2】封装要传递的数据，需要以JSON格式，并且要做编码规范（保证不会出现中文乱码）
+            //电解企业标识 + "-" + 帧类型 + "-" + 槽号
+            //帧类型：1—主界面实时信息（2秒）；2—分区监控实时信息（2秒）；
+            //3—单槽实时信息（2秒）；4—单槽10分钟动态曲线（2秒）；5—单槽阳极电流实时信息（2秒）；
+            //6—单槽10分钟阳极电流动态曲线（2秒）；7—单槽全槽温度实时信息（2秒）；8—单槽10分钟全槽温度动态曲线（2秒）；
+            string test = "1018-11-6101";
+            string jsonData = new JavaScriptSerializer().Serialize(test);//需要空间：System.Web.Script.Serialization
+            byte[] byteArray = Encoding.UTF8.GetBytes(jsonData);
+
+            //【3】创建请求对象，并设置相关的属性，命名空间：System.Net
+            WebRequest webRequest = WebRequest.Create(url);
+            webRequest.Method = "post";
+            webRequest.ContentType = "application/json";
+            webRequest.ContentLength = byteArray.Length;
+
+            //【4】获取字节流对象，并向流中写入数据（请求对象与流对象关联）
+            Stream byteStream = webRequest.GetRequestStream();
+            byteStream.Write(byteArray, 0, byteArray.Length);
+            byteStream.Close();
+
+            //【5】创建相应对象
+            HttpWebResponse webResponse = (HttpWebResponse)webRequest.GetResponse();
+
+            //【7】如果请求成功，则读取所有数据
+            if (webResponse.StatusCode == HttpStatusCode.OK)
+            {
+                //7.1 获取返回的数据流
+                byteStream = webResponse.GetResponseStream();
+                //7.2 根据返回的数据流创建读取器
+                StreamReader reader = new StreamReader(byteStream);
+                //7.3 读取所有数据
+                string readerContentFromServer = reader.ReadToEnd();
+
+                //显示结果
+                //string[] splitText = readerContentFromServer.Split('-');
+
+                int pos = readerContentFromServer.IndexOf('\"');//去掉字符串开始和结尾的转义字符
+                if (pos == 0)
+                {
+                    string tmpText = readerContentFromServer.Substring(1, readerContentFromServer.Length - 2);
+                    byte[] tmpBuffer = Convert.FromBase64String(tmpText);
+                    this.lblInfo.Text = tmpBuffer.Length.ToString();
+                }
+            }
+            else
+            {
+                //可以自己进一步处理
+
+            }
+
+        }
+    }
+}

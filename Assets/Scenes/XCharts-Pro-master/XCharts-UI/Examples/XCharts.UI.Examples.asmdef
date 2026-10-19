@@ -1,0 +1,16 @@
+{
+    "name": "XCharts.UI.Examples",
+    "references": [
+        "XCharts.Runtime",
+        "XCharts.Runtime.UI"
+    ],
+    "optionalUnityReferences": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": []
+}
