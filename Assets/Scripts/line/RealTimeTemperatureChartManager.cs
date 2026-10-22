@@ -341,7 +341,7 @@ namespace XCharts.Example
             }
             
             // 如果槽号为空，则不加载数据 20250813
-            if (selectedPotName == "请先选择车间工区" || selectedPotName == "槽号选择" || selectedPotName.Length == 0)
+            if (selectedPotName == "请选择工区" || selectedPotName == "槽号选择" || selectedPotName.Length == 0)
             {
 				UnityEngine.Debug.Log("槽号为空，跳过本次请求");
 				return;
@@ -350,7 +350,7 @@ namespace XCharts.Example
             isUpdating = true;
 
             // 显示加载提示
-			if (selectedPotName != null && selectedPotName.Length > 0 && selectedPotName != "槽号选择" && selectedPotName != "请先选择车间工区")
+			if (selectedPotName != null && selectedPotName.Length > 0 && selectedPotName != "槽号选择" && selectedPotName != "请选择工区")
             {
 				ShowLoadingText(true);
 			}				

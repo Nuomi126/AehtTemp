@@ -471,6 +471,7 @@ public class CanshuXiuGaiController : MonoBehaviour
     private void FillTable(UITable table, List<CanshuXiuGaiDataManager.ParameterModifyRecord> dataRows)
     {
         if (table == null) return;
+
         table.ClearData();
         if (dataRows == null) return;
         for (int i = 0; i < dataRows.Count; i++)
@@ -487,7 +488,12 @@ public class CanshuXiuGaiController : MonoBehaviour
                 r.modifyTime
             });
         }
+
+        // UITable 运行时创建单元格；显式刷新确保列宽和行高立即应用。
+        table.RefreshTable();
     }
+
+    
 
     
 }

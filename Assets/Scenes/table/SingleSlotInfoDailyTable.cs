@@ -254,7 +254,9 @@ namespace XCharts.UI.Demo
 
             m_Table.SetColumns(headers);
 
-            float[] widths = { 120f, 120f, 90f, 90f, 100f, 120f, 110f, 110f, 110f };
+            // 表头使用 28 号字体；“电解质水平”为 5 个汉字，需要至少 160 的可用宽度。
+            // 同时压缩其余短标题列，避免仅增加一列导致整表在手机端向右溢出。
+            float[] widths = { 110f, 115f, 85f, 85f, 95f, 160f, 100f, 100f, 100f };
             if (m_Table.columns != null)
             {
                 for (int i = 0; i < m_Table.columns.Count && i < widths.Length; i++)

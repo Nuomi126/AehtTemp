@@ -1430,8 +1430,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 450.99963, y: 0}
-  m_SizeDelta: {x: 180, y: 75}
+  m_AnchoredPosition: {x: 510.99963, y: 0}
+  m_SizeDelta: {x: 300, y: 75}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &106293686
 MonoBehaviour:
@@ -5062,7 +5062,7 @@ MonoBehaviour:
         m_TMPSpriteAsset: {fileID: 0}
   - m_Show: 1
     m_Content: "\u4FEE\u6539\u65F6\u95F4"
-    m_Width: 260
+    m_Width: 300
     m_DataLabelStyle:
       m_Show: 0
       m_Position: 0
@@ -6404,8 +6404,8 @@ RectTransform:
   m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
   m_AnchorMin: {x: 0.5, y: 0.5}
   m_AnchorMax: {x: 0.5, y: 0.5}
-  m_AnchoredPosition: {x: 492.84674, y: 0}
-  m_SizeDelta: {x: 260, y: 75}
+  m_AnchoredPosition: {x: 512.84674, y: 0}
+  m_SizeDelta: {x: 300, y: 75}
   m_Pivot: {x: 0.5, y: 0.5}
 --- !u!114 &340133933
 MonoBehaviour:
@@ -20212,6 +20212,7 @@ GameObject:
   serializedVersion: 7
   m_Component:
   - component: {fileID: 1260664412}
+  - component: {fileID: 1260664413}
   m_Layer: 0
   m_HasEditorInfo: 1
   m_Name: choose2
@@ -20241,6 +20242,22 @@ RectTransform:
   m_AnchoredPosition: {x: -2.0003662, y: 8}
   m_SizeDelta: {x: 0, y: 100}
   m_Pivot: {x: 0.5, y: 1}
+--- !u!114 &1260664413
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 1260664411}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 1a094aa4ce8119441a99cc0359d8d3cb, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: 
+  toggleButton: {fileID: 0}
+  functionZone: {fileID: 0}
+  useAnimation: 0
+  animationDuration: 0.3
 --- !u!1 &1261531950
 GameObject:
   m_ObjectHideFlags: 0
@@ -23255,7 +23272,7 @@ MonoBehaviour:
         m_TMPSpriteAsset: {fileID: 0}
   - m_Show: 1
     m_Content: "\u4FEE\u6539\u65F6\u95F4"
-    m_Width: 180
+    m_Width: 300
     m_DataLabelStyle:
       m_Show: 0
       m_Position: 0

@@ -66,7 +66,7 @@ public class SlotNumberSelector : MonoBehaviour
         {
             StartCoroutine(InitializeDefaultsFromData());  // 数据准备好后设置真正默认值
         }
-		//selectedDisplayText.text = "请先选择车间工区";
+		//selectedDisplayText.text = "请选择工区";
 
 		// 异步加载实际数据
 		//StartCoroutine(LoadActualDataAsync());
@@ -372,7 +372,7 @@ public class SlotNumberSelector : MonoBehaviour
         if (!ExtractWorkshopAndWorkAreaNumbers())
         {
             Debug.LogWarning("无法从文本框中提取车间号和工区号");
-            ShowDefaultData("请先选择车间工区");
+            ShowDefaultData("请选择工区");
             return;
         }
         

@@ -158,6 +158,9 @@ public class ZoneMonitorUIController : MonoBehaviour
         // 哪怕表格是空的也要计算并更新（以显示 "-" 或者为 0 的内容）
         if (summaryTable != null)
         {
+            // 汇总表原先只填充数据行，未将已定义的表头写入 UITable，
+            // 因此会显示为没有表头的第二张表。
+            ApplySummaryHeaders(summaryTable);
             summaryTable.ClearData();
             var summaryRows = CalculateSummaryRows();
             foreach (var row in summaryRows)
@@ -170,6 +173,42 @@ public class ZoneMonitorUIController : MonoBehaviour
         FixTableFonts(effectTable);
         FixTableFonts(summaryTable);
 #endif
+    }
+
+    /// <summary>
+    /// 根据当前页签设置汇总表的列标题。
+    /// SetColumns 会重建列对象，所以先保存 Inspector 中已有的列宽，再恢复，
+    /// 避免运行时补表头改变原有布局。
+    /// </summary>
+    private void ApplySummaryHeaders(UITable summaryTable)
+    {
+        var headers = GetSummaryHeadersForCurrentTab();
+        if (summaryTable == null || headers == null || headers.Count == 0)
+        {
+            return;
+        }
+
+        var existingWidths = new List<float>();
+        if (summaryTable.columns != null)
+        {
+            foreach (var column in summaryTable.columns)
+            {
+                existingWidths.Add(column.width);
+            }
+        }
+
+        summaryTable.SetColumns(headers);
+
+        for (int i = 0; i < summaryTable.columns.Count && i < existingWidths.Count; i++)
+        {
+            summaryTable.columns[i].width = existingWidths[i];
+        }
+
+        if (summaryTable.columnHeaderStyle != null)
+        {
+            summaryTable.columnHeaderStyle.show = true;
+            summaryTable.columnHeaderStyle.defalutLabelStyle.show = true;
+        }
     }
 
 #if dUI_TextMeshPro
@@ -208,11 +247,11 @@ public class ZoneMonitorUIController : MonoBehaviour
         switch (currentTab)
         {
             case ZoneMonitorTabState.BasicInfo:
-                return new List<string> { "车间/工区/系列", "平均电压(mV)", "平均工作电压(mV)", "平均日均下料(kg)" };
+                return new List<string> { "范围", "槽电压", "工作电压" };
             case ZoneMonitorTabState.AdditionalInfo:
-                return new List<string> { "车间/工区/系列", "平均针振(mV)", "平均摆动(mV)", "平均母线位置(mm)" };
+                return new List<string> { "范围", "针振", "摆动", "母线位置" };
             case ZoneMonitorTabState.ControlInfo:
-                return new List<string> { "车间/工区/系列", "平均设定电压(mV)", "平均日欠过比", "异常槽数量" };
+                return new List<string> { "范围", "设定电压", "日欠过比", "异常槽数" };
         }
         return new List<string>();
     }
@@ -227,9 +266,10 @@ public class ZoneMonitorUIController : MonoBehaviour
 
         if (latestData == null || latestData.Count == 0)
         {
-            rows.Add(new List<string> { workAreaPrefix, "-", "-", "-" });
-            rows.Add(new List<string> { workshopPrefix, "-", "-", "-" });
-            rows.Add(new List<string> { seriesPrefix, "-", "-", "-" });
+            int columnCount = GetSummaryHeadersForCurrentTab().Count;
+            rows.Add(CreateEmptySummaryRow(workAreaPrefix, columnCount));
+            rows.Add(CreateEmptySummaryRow(workshopPrefix, columnCount));
+            rows.Add(CreateEmptySummaryRow(seriesPrefix, columnCount));
             return rows;
         }
 
@@ -238,13 +278,13 @@ public class ZoneMonitorUIController : MonoBehaviour
         switch (currentTab)
         {
             case ZoneMonitorTabState.BasicInfo:
-                float sumVol = 0, sumWorkVol = 0, sumFeed = 0;
-                foreach(var d in latestData) { sumVol += d.SlotVoltage; sumWorkVol += d.SlotVoltage; sumFeed += d.DailyAvgFeed; }
+                float sumVol = 0, sumWorkVol = 0;
+                foreach(var d in latestData) { sumVol += d.SlotVoltage; sumWorkVol += d.SlotVoltage; }
                 
-                rows.Add(new List<string> { workAreaPrefix, (sumVol / count).ToString("F2"), (sumWorkVol / count).ToString("F2"), (sumFeed / count).ToString("F2") });
+                rows.Add(new List<string> { workAreaPrefix, (sumVol / count).ToString("F2"), (sumWorkVol / count).ToString("F2") });
                 // 使用简单的模拟数据生成车间和系列（为了满足显示需求，后续需要接口提供全厂工区数据才能计算真实的整厂平均）
-                rows.Add(new List<string> { workshopPrefix, ((sumVol / count) - 0.01f).ToString("F2"), ((sumWorkVol / count) - 0.01f).ToString("F2"), ((sumFeed / count) + 5).ToString("F2") });
-                rows.Add(new List<string> { seriesPrefix, ((sumVol / count) - 0.05f).ToString("F2"), ((sumWorkVol / count) - 0.05f).ToString("F2"), ((sumFeed / count) - 10).ToString("F2") });
+                rows.Add(new List<string> { workshopPrefix, ((sumVol / count) - 0.01f).ToString("F2"), ((sumWorkVol / count) - 0.01f).ToString("F2") });
+                rows.Add(new List<string> { seriesPrefix, ((sumVol / count) - 0.05f).ToString("F2"), ((sumWorkVol / count) - 0.05f).ToString("F2") });
                 break;
 
             case ZoneMonitorTabState.AdditionalInfo:
@@ -271,6 +311,16 @@ public class ZoneMonitorUIController : MonoBehaviour
         }
         
         return rows;
+    }
+
+    private static List<string> CreateEmptySummaryRow(string scope, int columnCount)
+    {
+        var row = new List<string> { scope };
+        for (int i = 1; i < columnCount; i++)
+        {
+            row.Add("-");
+        }
+        return row;
     }
 
     private List<string> GetHeadersForCurrentTab()
