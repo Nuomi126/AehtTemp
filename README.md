@@ -1,5 +1,18 @@
 # zyzy1199
 
+## 完整克隆项目
+
+本仓库的 5 个大文件存储在 GitHub Git LFS。请使用 Git 和 Git LFS 克隆；Gitee 网页的“下载 ZIP”不会包含这些文件的真实内容。
+
+```powershell
+git lfs install
+git clone https://gitee.com/glutinous-rice_2/aehttemp.git
+cd aehttemp
+git lfs pull
+```
+
+`git lfs pull` 会按照仓库中的 `.lfsconfig` 从公开的 GitHub 仓库下载完整资源。
+
 #### 介绍
 {**以下是 Gitee 平台说明，您可以替换此简介**
 Gitee 是 OSCHINA 推出的基于 Git 的代码托管平台（同时支持 SVN）。专为开发者提供稳定、高效、安全的云端软件开发协作平台
