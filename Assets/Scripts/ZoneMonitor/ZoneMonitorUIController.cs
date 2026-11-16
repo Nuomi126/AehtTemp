@@ -258,7 +258,9 @@ public class ZoneMonitorUIController : MonoBehaviour
 
     private List<List<string>> CalculateSummaryRows()
     {
-        string workAreaPrefix = (ZoneMonitorDataManager.Instance != null ? ZoneMonitorDataManager.Instance.currentWorkAreaId : "?") + "工区";
+        string workAreaPrefix = ZoneMonitorDataManager.Instance != null
+            ? ZoneMonitorDataManager.Instance.CurrentWorkAreaDisplayName
+            : "?工区";
         string workshopPrefix = (ZoneMonitorDataManager.Instance != null ? ZoneMonitorDataManager.Instance.companyIndex : "?") + "车间";
         string seriesPrefix = "系列";
 

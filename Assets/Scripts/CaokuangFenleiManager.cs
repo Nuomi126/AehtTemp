@@ -73,13 +73,9 @@ public class CaokuangFenleiManager : MonoBehaviour
             lishiqushiTable.onTableClick = OnLishiqushiTableClicked;
         }
 
-        // 初始状态：显示外层，隐藏内层
+        // 外层“当日报表/历史趋势”的显隐统一交给 CaokuangUIController，
+        // 此处只关闭历史分析详情，避免两个外层面板在启动时互相覆盖。
         if (lishifenxiPanel != null) lishifenxiPanel.SetActive(false);
-        if (lishiqushiPanel != null) lishiqushiPanel.SetActive(true);
-        if (dangricaokuangPanel != null) dangricaokuangPanel.SetActive(true);
-
-        // 为了能测试点击，给最外层的历史趋势UITable填充几行临时测试数据
-        MockLishiqushiTableData();
     }
 
     // 辅助方法：给未知的 UI 文本对象赋值

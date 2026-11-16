@@ -150,6 +150,7 @@ namespace Aeht.UI
             var stateData = new List<float>();      // 白色折线：状态 ~3600-3700 方波
             var abnormalIndices = new List<int>();  // 异常点索引
             var afLabels = new List<(int index, string text, Color color)>(); // AF标记
+            var controlStates = new List<(int index, bool automatic, bool upward)>();
             var bar1Data = new List<float>();       // 底部紫色条
             var bar2Data = new List<float>();       // 底部红色条（出铝）
 
@@ -174,6 +175,13 @@ namespace Aeht.UI
                 // 状态：3600-3700 方波
                 stateData.Add((i % 3 == 0) ? 3700f : 3600f);
 
+                // 仅在4个代表性时间点显示状态箭头，避免24个箭头挤在一起。
+                if (i >= 2 && (i - 2) % 6 == 0)
+                {
+                    int stateIndex = (i - 2) / 6;
+                    controlStates.Add((i, stateIndex < 2, stateIndex % 2 == 0));
+                }
+
                 // AF 标记：随机绿色/红色 AF
                 if (rnd.NextDouble() < 0.4)
                 {
@@ -186,7 +194,7 @@ namespace Aeht.UI
             bar2Data.Add(8f);       // 出铝：固定值8，画水平虚线
             }
 
-            RenderChart(voltageData, tempData, stateData, abnormalIndices, afLabels, bar1Data, bar2Data);
+            RenderChart(voltageData, tempData, stateData, abnormalIndices, afLabels, controlStates, bar1Data, bar2Data);
         }
 
         // ==================== 核心渲染 ====================
@@ -196,6 +204,7 @@ namespace Aeht.UI
             List<float> stateData,
             List<int> abnormalIndices,
             List<(int index, string text, Color color)> afLabels,
+            List<(int index, bool automatic, bool upward)> controlStates,
             List<float> bar1Data,
             List<float> bar2Data)
         {
@@ -204,27 +213,53 @@ namespace Aeht.UI
             chart.RemoveAllSerie();
             chart.RemoveChartComponents<YAxis>();
             chart.RemoveChartComponents<GridCoord>();
+            chart.RemoveChartComponents<Legend>();
 
-            // ========== 0. Legend 图例 ==========
+            // ========== 0. 原曲线图例 ==========
             var legend = chart.EnsureChartComponent<Legend>();
             legend.show = true;
             legend.location.align = Location.Align.TopCenter;
-            legend.location.top = 0.02f; // 靠近顶部
-            legend.itemWidth = 20f;
+            legend.location.top = 0.01f;
+            legend.orient = Orient.Horizonal;
+            legend.selectedMode = Legend.SelectedMode.Multiple;
+            legend.itemWidth = 18f;
             legend.itemHeight = 10f;
-            legend.itemGap = 15f;
+            legend.itemGap = 10f;
+            legend.data = new List<string> { "工作电压", "槽温", "异常点", "状态", "出铝", "AF标记" };
+            legend.textLimit.enable = false;
             if (legend.labelStyle.textStyle == null)
                 legend.labelStyle.textStyle = new TextStyle();
             legend.labelStyle.textStyle.color = Color.white;
-            legend.labelStyle.textStyle.fontSize = 14;
+            legend.labelStyle.textStyle.fontSize = 13;
             ApplyFont(legend.labelStyle.textStyle);
+
+            // 状态图例独立显示，不覆盖原来的曲线图例。
+            var statusLegend = chart.AddChartComponent<Legend>();
+            statusLegend.show = true;
+            statusLegend.location.align = Location.Align.TopLeft;
+            statusLegend.location.left = 0.02f;
+            statusLegend.location.top = 0.065f;
+            statusLegend.orient = Orient.Horizonal;
+            statusLegend.selectedMode = Legend.SelectedMode.None;
+            statusLegend.itemWidth = 12f;
+            statusLegend.itemHeight = 10f;
+            statusLegend.itemGap = 8f;
+            statusLegend.data = new List<string> { "自动↑", "自动↓", "手动↑", "手动↓" };
+            statusLegend.textLimit.enable = true;
+            statusLegend.textLimit.maxWidth = 52f;
+            statusLegend.textLimit.suffix = string.Empty;
+            if (statusLegend.labelStyle.textStyle == null)
+                statusLegend.labelStyle.textStyle = new TextStyle();
+            statusLegend.labelStyle.textStyle.color = Color.white;
+            statusLegend.labelStyle.textStyle.fontSize = 12;
+            ApplyFont(statusLegend.labelStyle.textStyle);
 
             // ========== 1. Grid ==========
             var grid = chart.EnsureChartComponent<GridCoord>();
             grid.show = true;
             grid.left = 60;
             grid.right = 60;
-            grid.top = 40;
+            grid.top = 72;
             grid.bottom = 80;
             grid.borderWidth = 1f;
             grid.borderColor = new Color32(120, 120, 120, 150);
@@ -301,6 +336,7 @@ namespace Aeht.UI
             serieVoltage.yAxisIndex = 0;
             serieVoltage.lineStyle.width = 1.5f;
             serieVoltage.lineStyle.color = new Color(1f, 0.35f, 0.5f); // 粉红/红
+            serieVoltage.itemStyle.color = serieVoltage.lineStyle.color;
             serieVoltage.symbol.show = false; // 不显示标记点
             serieVoltage.animation.enable = false;
             for (int i = 0; i < voltageData.Count; i++)
@@ -313,6 +349,7 @@ namespace Aeht.UI
             serieTemp.yAxisIndex = 0;
             serieTemp.lineStyle.width = 2f;
             serieTemp.lineStyle.color = new Color(0.6f, 0.4f, 1f); // 紫色
+            serieTemp.itemStyle.color = serieTemp.lineStyle.color;
             serieTemp.symbol.show = false; // 关闭内置符号（EmptyTriangle 是硬编码等边三角）
             serieTemp.animation.enable = false;
             for (int i = 0; i < tempData.Count; i++)
@@ -320,14 +357,14 @@ namespace Aeht.UI
                 chart.AddData(1, tempData[i]);
             }
 
-            // ========== 7. 红色 Plus 散点：异常点 ==========
+            // ========== 7. 亮蓝色 Plus 散点：异常点 ==========
             var serieAbnormal = chart.AddSerie<Scatter>("异常点");
             serieAbnormal.yAxisIndex = 0;
             serieAbnormal.symbol.show = true;
             serieAbnormal.symbol.type = SymbolType.Plus;
             serieAbnormal.symbol.size = 12f;
-            serieAbnormal.symbol.color = new Color(1f, 0.2f, 0.2f); // 红色
-            serieAbnormal.itemStyle.color = new Color(1f, 0.2f, 0.2f);
+            serieAbnormal.symbol.color = new Color32(41, 182, 246, 255); // 亮蓝色，与红绿箭头区分
+            serieAbnormal.itemStyle.color = new Color32(41, 182, 246, 255);
             serieAbnormal.symbol.borderWidth = 2f;
             for (int i = 0; i < 24; i++)
             {
@@ -345,6 +382,7 @@ namespace Aeht.UI
             serieState.yAxisIndex = 0;
             serieState.lineStyle.width = 1.5f;
             serieState.lineStyle.color = Color.white;
+            serieState.itemStyle.color = Color.white;
             serieState.symbol.show = false;
             serieState.animation.enable = false;
             for (int i = 0; i < stateData.Count; i++)
@@ -358,6 +396,7 @@ namespace Aeht.UI
             serieBar2.lineStyle.width = 2.5f;
             serieBar2.lineStyle.type = LineStyle.Type.Dashed;
             serieBar2.lineStyle.color = new Color(1f, 0.3f, 0.3f, 1f); // 红色，不透明
+            serieBar2.itemStyle.color = serieBar2.lineStyle.color;
             serieBar2.symbol.show = false; // 不显示数据点
             serieBar2.lineType = LineType.Smooth; // 平滑曲线
             serieBar2.animation.enable = false;
@@ -370,6 +409,7 @@ namespace Aeht.UI
             var serieAF = chart.AddSerie<Scatter>("AF标记");
             serieAF.yAxisIndex = 0;
             serieAF.symbol.show = false; // 不显示图形，只显示文字
+            serieAF.itemStyle.color = new Color32(70, 210, 95, 255);
             for (int i = 0; i < 24; i++)
             {
                 var af = afLabels.FirstOrDefault(a => a.index == i);
@@ -391,41 +431,80 @@ namespace Aeht.UI
                 }
             }
 
-            chart.RefreshChart();
+            Color autoColor = new Color32(70, 210, 95, 255);
+            Color manualColor = new Color32(245, 75, 75, 255);
+            AddStatusLegendSerie(chart, "自动↑", autoColor);
+            AddStatusLegendSerie(chart, "自动↓", autoColor);
+            AddStatusLegendSerie(chart, "手动↑", manualColor);
+            AddStatusLegendSerie(chart, "手动↓", manualColor);
 
-            // ========== 12. 自定义绘制：槽温的"三角形+竖线"大头针（锐角三角形） ==========
-            // EmptyTriangle 是硬编码等边三角，这里用 UGL.DrawLine 画 3 条线，组成高而尖的锐角等腰三角形
+            // ========== 12. 自定义绘制：槽温曲线的状态竖线和方向箭头 ==========
             chart.onDrawAfterSerie = (vh, serie) =>
             {
                 if (serie.serieName != "槽温") return;
-                var triColor = new Color32(102, 255, 102, 255); // 绿色
-                float triHalfW = 8f;   // 三角形半宽（底边总宽 16）
-                float triH = 20f;      // 三角形高（高而尖，锐角）
-                float pinLen = 28f;    // 竖线长度（向下）
-                float lineW = 2f;      // 线宽
+                float headHalfWidth = 7.5f;
+                float headHeight = 10f;
+                float shaftHalfWidth = 2.5f;
+                float shaftLength = 12f;
 
-                for (int i = 0; i < serie.data.Count; i++)
+                foreach (var marker in controlStates)
                 {
-                    var sd = serie.data[i];
+                    if (marker.index < 0 || marker.index >= serie.data.Count) continue;
+                    var sd = serie.data[marker.index];
                     var pt = sd.context.position;
-                    if (pt == Vector3.zero) continue; // 无效数据
+                    if (pt == Vector3.zero) continue;
 
-                    // 三个顶点（Y 向下：-Y = 上，+Y = 下）
-                    var top  = pt + new Vector3(0,            -triH / 2f, 0); // 顶点（向上）
-                    var left = pt + new Vector3(-triHalfW,    +triH / 2f, 0); // 左下
-                    var rght = pt + new Vector3(+triHalfW,    +triH / 2f, 0); // 右下
-
-                    // 空心三角形 = 画 3 条线
-                    UGL.DrawLine(vh, top, left, lineW, triColor); // 左斜边
-                    UGL.DrawLine(vh, top, rght, lineW, triColor); // 右斜边
-                    UGL.DrawLine(vh, left, rght, lineW, triColor); // 底边
-
-                    // 竖线：从底边中点向下，紧贴底边不超出
-                    var lineTop    = pt + new Vector3(0, +triH / 2f, 0);     // 底边中点
-                    var lineBottom = lineTop + new Vector3(0, pinLen, 0);    // 向下延伸
-                    UGL.DrawLine(vh, lineTop, lineBottom, lineW, triColor);
+                    Color markerColor = marker.automatic ? autoColor : manualColor;
+                    // 只绘制箭头本身：尾杆端点直接落在折线数据点，不再增加连接线。
+                    if (marker.upward)
+                    {
+                        float baseY = pt.y + shaftLength;
+                        float tipY = baseY + headHeight;
+                        UGL.DrawQuadrilateral(vh,
+                            new Vector3(pt.x - shaftHalfWidth, pt.y, pt.z),
+                            new Vector3(pt.x + shaftHalfWidth, pt.y, pt.z),
+                            new Vector3(pt.x + shaftHalfWidth, baseY, pt.z),
+                            new Vector3(pt.x - shaftHalfWidth, baseY, pt.z),
+                            markerColor);
+                        UGL.DrawTriangle(vh,
+                            new Vector3(pt.x - headHalfWidth, baseY, pt.z),
+                            new Vector3(pt.x + headHalfWidth, baseY, pt.z),
+                            new Vector3(pt.x, tipY, pt.z),
+                            markerColor);
+                    }
+                    else
+                    {
+                        float baseY = pt.y - shaftLength;
+                        float tipY = baseY - headHeight;
+                        UGL.DrawQuadrilateral(vh,
+                            new Vector3(pt.x - shaftHalfWidth, pt.y, pt.z),
+                            new Vector3(pt.x + shaftHalfWidth, pt.y, pt.z),
+                            new Vector3(pt.x + shaftHalfWidth, baseY, pt.z),
+                            new Vector3(pt.x - shaftHalfWidth, baseY, pt.z),
+                            markerColor);
+                        UGL.DrawTriangle(vh,
+                            new Vector3(pt.x - headHalfWidth, baseY, pt.z),
+                            new Vector3(pt.x + headHalfWidth, baseY, pt.z),
+                            new Vector3(pt.x, tipY, pt.z),
+                            markerColor);
+                    }
                 }
             };
+
+            // 回调设置完成后再刷新，确保首帧就能绘制状态标识。
+            chart.RefreshChart();
+        }
+
+        private static void AddStatusLegendSerie(LineChart chart, string name, Color color)
+        {
+            var serie = chart.AddSerie<Scatter>(name);
+            serie.yAxisIndex = 0;
+            serie.symbol.show = true;
+            serie.symbol.type = SymbolType.Arrow;
+            serie.symbol.size = 10f;
+            serie.symbol.color = color;
+            serie.itemStyle.color = color;
+            serie.animation.enable = false;
         }
 
         private void ApplyFont(TextStyle textStyle)

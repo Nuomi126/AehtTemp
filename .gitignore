@@ -14,3 +14,9 @@ MemoryCaptures/
 Thumbs.db
 Aeh_BurstDebugInformation_DoNotShip/
 **/BurstDebugInformation_DoNotShip/
+
+# Local runtime output and private credentials
+*.log
+wildfire-auth-private.json
+*.lfs-pointer.bak
+*.lfs-pointer.bak.meta

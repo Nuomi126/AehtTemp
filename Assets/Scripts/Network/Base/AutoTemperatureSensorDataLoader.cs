@@ -136,7 +136,19 @@ public class AutoTemperatureSensorDataLoader : MonoBehaviour
     
     private IEnumerator DelayedAutoLoad()
     {
+        // 全局配置跨场景保留，已加载时不再等待和重复请求 Frame 66。
+        if (GlobalTemperatureSensorDataManager.Instance.isDataLoaded)
+        {
+            yield break;
+        }
+
         yield return new WaitForSeconds(autoLoadDelay);
+
+        if (GlobalTemperatureSensorDataManager.Instance.isDataLoaded)
+        {
+            yield break;
+        }
+
         LoadTemperatureSensorData();
     }
     

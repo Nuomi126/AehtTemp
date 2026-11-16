@@ -59,6 +59,10 @@ namespace XCharts.Example
         private const int RecordNoBytes = 2;
         private const int ValueBytes = 96;
 
+        // 保留最近一次查询结果，切换场景返回相同条件时跳过网络请求。
+        private static string cachedRequestParam;
+        private static ParsedFrame cachedFrame;
+
         private static readonly string[] HourLabels =
         {
             "00:00","01:00","02:00","03:00","04:00","05:00","06:00","07:00","08:00","09:00","10:00","11:00",
@@ -149,6 +153,16 @@ namespace XCharts.Example
             ShowLoading(true, "正在读取真实历史数据...");
 
             string requestParam = $"{companyId}-{frameType}-{selectedPotName}-{queryDate}";
+            if (cachedFrame != null && cachedRequestParam == requestParam)
+            {
+                parsedFrames.Clear();
+                parsedFrames.Add(cachedFrame);
+                ReportStatus($"使用缓存数据: {requestParam}");
+                RenderChartsFromFrames();
+                FinishLoading();
+                yield break;
+            }
+
             byte[] bodyRaw = Encoding.UTF8.GetBytes($"\"{requestParam}\"");
             ReportStatus($"请求参数: {requestParam}");
             ReportStatus($"请求地址: {apiUrl}");
@@ -183,6 +197,8 @@ namespace XCharts.Example
 
                 parsedFrames.Clear();
                 parsedFrames.Add(frame);
+                cachedRequestParam = requestParam;
+                cachedFrame = frame;
                 ReportStatus($"真实帧解析完成: 记录数={frame.records.Count}, dataLength={frame.dataLength}");
                 RenderChartsFromFrames();
             }
@@ -623,6 +639,12 @@ namespace XCharts.Example
                 {
                     serie.lineStyle.color = colors[s % colors.Length];
                     serie.lineStyle.width = 3f;
+                }
+
+                // XCharts 的图例标识优先读取 itemStyle；只设置线色会导致图例显示为默认色。
+                if (serie.itemStyle != null)
+                {
+                    serie.itemStyle.color = colors[s % colors.Length];
                 }
 
                 if (serie.symbol != null)

@@ -246,7 +246,7 @@ namespace XCharts.UI.Demo
                 "温度",
                 "分子比",
                 "铝水平",
-                "电解质水平",
+                "质水平",
                 "下料量",
                 "出铝量",
                 "总功耗"
@@ -254,9 +254,9 @@ namespace XCharts.UI.Demo
 
             m_Table.SetColumns(headers);
 
-            // 表头使用 28 号字体；“电解质水平”为 5 个汉字，需要至少 160 的可用宽度。
-            // 同时压缩其余短标题列，避免仅增加一列导致整表在手机端向右溢出。
-            float[] widths = { 110f, 115f, 85f, 85f, 95f, 160f, 100f, 100f, 100f };
+            // 表头使用 28 号字体；“质水平”为 3 个汉字，110 可容纳文字与左右留白。
+            // 此处在运行时设置列宽，因此 Inspector 的同项设置不会覆盖它。
+            float[] widths = { 110f, 115f, 85f, 85f, 95f, 110f, 100f, 100f, 100f };
             if (m_Table.columns != null)
             {
                 for (int i = 0; i < m_Table.columns.Count && i < widths.Length; i++)

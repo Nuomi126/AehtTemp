@@ -91,6 +91,7 @@ public class GongyiCurveManager : MonoBehaviour
 
     [Header("字体")]
     [SerializeField] private TMP_FontAsset chineseFontAsset;
+    private static TMP_FontAsset cachedChineseFontAsset;
 
     private LineChart[] _allCharts;   // [0]=dianya, [1]=caowen, [2]=lvshuiping, [3]=dianjiezhi, [4]=xichulv, [5]=gaihanliang
     private string[] _chartTitles;    // 对应标题
@@ -1083,7 +1084,17 @@ public class GongyiCurveManager : MonoBehaviour
 
     private void AutoLoadChineseFont()
     {
-        if (chineseFontAsset != null) return;
+        if (chineseFontAsset != null)
+        {
+            cachedChineseFontAsset = chineseFontAsset;
+            return;
+        }
+
+        if (cachedChineseFontAsset != null)
+        {
+            chineseFontAsset = cachedChineseFontAsset;
+            return;
+        }
 
         // 策略1：从已加载内存中搜索
         var allFonts = Resources.FindObjectsOfTypeAll<TMP_FontAsset>();
@@ -1095,6 +1106,7 @@ public class GongyiCurveManager : MonoBehaviour
                 && !n.Contains("liberation"))
             {
                 chineseFontAsset = f;
+                cachedChineseFontAsset = f;
                 Debug.Log($"[GongyiCurveManager] AutoLoad (FindObjects): {f.name}");
                 return;
             }
@@ -1106,6 +1118,7 @@ public class GongyiCurveManager : MonoBehaviour
             if (n.Contains("sdf") && !n.Contains("liberation") && !n.Contains("default"))
             {
                 chineseFontAsset = f;
+                cachedChineseFontAsset = f;
                 Debug.Log($"[GongyiCurveManager] AutoLoad (FindObjects-fallback): {f.name}");
                 return;
             }
@@ -1119,6 +1132,7 @@ public class GongyiCurveManager : MonoBehaviour
             chineseFontAsset = Resources.Load<TMP_FontAsset>("FangZhengShuSong-GBK-1 SDF");
         if (chineseFontAsset != null)
         {
+            cachedChineseFontAsset = chineseFontAsset;
             Debug.Log($"[GongyiCurveManager] AutoLoad (Resources): {chineseFontAsset.name}");
             return;
         }
@@ -1138,6 +1152,7 @@ public class GongyiCurveManager : MonoBehaviour
             if (font != null)
             {
                 chineseFontAsset = font;
+                cachedChineseFontAsset = font;
                 Debug.Log($"[GongyiCurveManager] AutoLoad (AssetDatabase): {font.name} @ {path}");
                 return;
             }

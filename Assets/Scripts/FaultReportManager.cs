@@ -292,11 +292,12 @@ public class FaultReportManager : MonoBehaviour
     private IEnumerator MockApiGetTodayFaultData(string workArea)
     {
         yield return new WaitForSeconds(1.0f); // 模拟网络耗时，增加等待时间确保UI初始化
+        int firstSlot = ResolveMockBaseSlot(workArea);
         todayFaultList = new List<FaultData> 
         { 
-            new FaultData { slotNumber = "2031", occurTime = "00:05:20", faultType = "电压异常" },
-            new FaultData { slotNumber = "2031", occurTime = "01:03:29", faultType = "电压异常" },
-            new FaultData { slotNumber = "2031", occurTime = "11:12:23", faultType = "下料故障" }
+            new FaultData { slotNumber = firstSlot.ToString(), occurTime = "00:05:20", faultType = "电压异常" },
+            new FaultData { slotNumber = (firstSlot + 1).ToString(), occurTime = "01:03:29", faultType = "电压异常" },
+            new FaultData { slotNumber = (firstSlot + 2).ToString(), occurTime = "11:12:23", faultType = "下料故障" }
         };
         UpdateTodayFaultUI();
     }
@@ -304,11 +305,12 @@ public class FaultReportManager : MonoBehaviour
     private IEnumerator MockApiGetTodayOperationData(string workArea)
     {
         yield return new WaitForSeconds(1.0f);
+        int firstSlot = ResolveMockBaseSlot(workArea);
         todayOperationList = new List<OperationData> 
         { 
-            new OperationData { slotNumber = "2031", operationTime = "02:49:12", operationType = "手动阳升" },
-            new OperationData { slotNumber = "2031", operationTime = "09:11:23", operationType = "手动阳升" },
-            new OperationData { slotNumber = "2031", operationTime = "10:12:12", operationType = "手动小下料" }
+            new OperationData { slotNumber = firstSlot.ToString(), operationTime = "02:49:12", operationType = "手动阳升" },
+            new OperationData { slotNumber = (firstSlot + 1).ToString(), operationTime = "09:11:23", operationType = "手动阳升" },
+            new OperationData { slotNumber = (firstSlot + 2).ToString(), operationTime = "10:12:12", operationType = "手动小下料" }
         };
         UpdateTodayOperationUI();
     }
@@ -316,11 +318,12 @@ public class FaultReportManager : MonoBehaviour
     private IEnumerator MockApiGetHistoryFaultData(string workArea, string date)
     {
         yield return new WaitForSeconds(1.0f);
+        int firstSlot = ResolveMockBaseSlot(workArea) + ResolveMockDateOffset(date);
         historyFaultList = new List<FaultData> 
         { 
-            new FaultData { slotNumber = "2031", occurTime = "17:11:09", faultType = "电压异常" },
-            new FaultData { slotNumber = "2031", occurTime = "00:05:20", faultType = "电压异常" },
-            new FaultData { slotNumber = "2031", occurTime = "01:03:29", faultType = "下料故障" }
+            new FaultData { slotNumber = firstSlot.ToString(), occurTime = "17:11:09", faultType = "电压异常" },
+            new FaultData { slotNumber = (firstSlot + 1).ToString(), occurTime = "00:05:20", faultType = "电压异常" },
+            new FaultData { slotNumber = (firstSlot + 2).ToString(), occurTime = "01:03:29", faultType = "下料故障" }
         };
         UpdateHistoryFaultUI();
     }
@@ -328,13 +331,51 @@ public class FaultReportManager : MonoBehaviour
     private IEnumerator MockApiGetHistoryOperationData(string workArea, string date)
     {
         yield return new WaitForSeconds(1.0f);
+        int firstSlot = ResolveMockBaseSlot(workArea) + ResolveMockDateOffset(date);
         historyOperationList = new List<OperationData> 
         { 
-            new OperationData { slotNumber = "2031", operationTime = "14:25:34", operationType = "手动阳降" },
-            new OperationData { slotNumber = "2031", operationTime = "19:38:09", operationType = "手动阳升" },
-            new OperationData { slotNumber = "2031", operationTime = "20:22:48", operationType = "手动阳升" }
+            new OperationData { slotNumber = firstSlot.ToString(), operationTime = "14:25:34", operationType = "手动阳降" },
+            new OperationData { slotNumber = (firstSlot + 1).ToString(), operationTime = "19:38:09", operationType = "手动阳升" },
+            new OperationData { slotNumber = (firstSlot + 2).ToString(), operationTime = "20:22:48", operationType = "手动阳升" }
         };
         UpdateHistoryOperationUI();
+    }
+
+    private static int ResolveMockBaseSlot(string workArea)
+    {
+        int workshop = 1;
+        int area = 1;
+        var matches = System.Text.RegularExpressions.Regex.Matches(workArea ?? string.Empty, @"\d+");
+
+        if (matches.Count >= 2)
+        {
+            int.TryParse(matches[0].Value, out workshop);
+            int.TryParse(matches[1].Value, out area);
+        }
+        else if (matches.Count == 1)
+        {
+            int value;
+            if (int.TryParse(matches[0].Value, out value))
+            {
+                if (!string.IsNullOrEmpty(workArea) && workArea.Contains("车间"))
+                    workshop = value;
+                else
+                    area = value;
+            }
+        }
+
+        workshop = Mathf.Max(1, workshop);
+        area = Mathf.Clamp(area, 1, 3);
+        return workshop * 1000 + 1 + (area - 1) * 55;
+    }
+
+    private static int ResolveMockDateOffset(string date)
+    {
+        if (string.IsNullOrEmpty(date)) return 0;
+        int seed = 0;
+        for (int i = 0; i < date.Length; i++)
+            if (char.IsDigit(date[i])) seed += date[i] - '0';
+        return seed % 12;
     }
 
     #endregion

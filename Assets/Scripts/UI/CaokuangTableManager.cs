@@ -33,6 +33,9 @@ public class CaokuangTableManager : MonoBehaviour
     [Header("详情弹窗 (panelslotdetail)")]
     public GameObject panelSlotDetail;
 
+    [Header("数据模式")]
+    [SerializeField] private bool useMockData = true;
+
     private string currentLishiWorkArea = "";
     private string currentLishiStartDate = "";
     private string currentLishiEndDate = "";
@@ -91,6 +94,17 @@ public class CaokuangTableManager : MonoBehaviour
         // 初始确保详情页是关闭的
         if (panelSlotDetail != null)
             panelSlotDetail.SetActive(false);
+
+        if (useMockData)
+        {
+            string defaultWorkArea = ResolveInitialWorkArea(dangriWorkAreaSelector);
+            currentLishiWorkArea = ResolveInitialWorkArea(lishiWorkAreaSelector);
+            currentLishiStartDate = DateTime.Today.AddDays(-30).ToString("yyyyMMdd");
+            currentLishiEndDate = DateTime.Today.ToString("yyyyMMdd");
+
+            FillMockDangriData(defaultWorkArea, currentLishiEndDate);
+            FillMockLishiData(currentLishiWorkArea, currentLishiStartDate, currentLishiEndDate);
+        }
     }
 
     private string apiUrl = "http://183.214.222.76:9000/api/Home/GetRemoteDataFromAlwit";
@@ -103,6 +117,12 @@ public class CaokuangTableManager : MonoBehaviour
     {
         // 当日报表，日期直接取今天
         string today = DateTime.Now.ToString("yyyyMMdd");
+        if (useMockData)
+        {
+            FillMockDangriData(workArea, today);
+            return;
+        }
+
         Debug.Log($"[当日报表] 准备请求API: 工区={workArea}, 日期={today}");
         
         StartCoroutine(FetchRemoteData(dangriTable, workArea, today, true));
@@ -143,6 +163,12 @@ public class CaokuangTableManager : MonoBehaviour
             !string.IsNullOrEmpty(currentLishiStartDate) && 
             !string.IsNullOrEmpty(currentLishiEndDate))
         {
+            if (useMockData)
+            {
+                FillMockLishiData(currentLishiWorkArea, currentLishiStartDate, currentLishiEndDate);
+                return;
+            }
+
             Debug.Log($"[历史趋势] 准备请求API: 工区={currentLishiWorkArea}, 开始时间={currentLishiStartDate}, 结束时间={currentLishiEndDate}");
             // 你可以将两个日期拼接来发送请求，如： "20240101_20240131"
             string dateRange = $"{currentLishiStartDate}_{currentLishiEndDate}";
@@ -228,6 +254,117 @@ public class CaokuangTableManager : MonoBehaviour
         }
 
         Debug.Log($"[CaokuangTable] {(isDangri ? "当日报表" : "历史趋势")}填充完成：成功 {successCount}/{slotNumbers.Count} 个槽，表格共 {table.data.Count} 行");
+    }
+
+    private void FillMockDangriData(string workArea, string date)
+    {
+        if (dangriTable == null) return;
+
+        int baseSlot = ResolveMockBaseSlot(workArea);
+        int seed = StableTextSeed(workArea + date);
+        dangriTable.ClearData();
+
+        for (int i = 0; i < 12; i++)
+        {
+            int score = 78 + (seed + i * 7) % 20;
+            int setVoltage = 3970 + (seed + i * 3) % 25;
+            int averageVoltage = setVoltage + 4 + (seed + i) % 12;
+            int workingVoltage = averageVoltage - 3 + (i % 5);
+            dangriTable.AddRow(
+                (baseSlot + i).ToString(),
+                FormatDate(date),
+                FormatVoltage(setVoltage),
+                FormatVoltage(averageVoltage),
+                FormatVoltage(workingVoltage),
+                score.ToString(),
+                ScoreToKuangQing(score));
+        }
+
+        dangriTable.RefreshGraph();
+        dangriTable.RefreshTable();
+        Debug.Log($"[CaokuangTable] 当日报表使用模拟数据：工区={workArea}，槽号={baseSlot}~{baseSlot + 11}");
+    }
+
+    private void FillMockLishiData(string workArea, string startDate, string endDate)
+    {
+        if (lishiTable == null) return;
+
+        int baseSlot = ResolveMockBaseSlot(workArea);
+        int seed = StableTextSeed(workArea + startDate + endDate);
+        lishiTable.ClearData();
+
+        for (int i = 0; i < 12; i++)
+        {
+            int score1 = 76 + (seed + i * 5) % 21;
+            int delta2 = ((seed + i) % 5) - 2;
+            int delta3 = ((seed + i * 3) % 7) - 3;
+            int score2 = Mathf.Clamp(score1 + delta2, 70, 99);
+            int score3 = Mathf.Clamp(score2 + delta3, 70, 99);
+            float average = (score1 + score2 + score3) / 3f;
+            string trend = score3 > score1 ? "上升 ↑" : score3 < score1 ? "下降 ↓" : "平稳 →";
+
+            lishiTable.AddRow(
+                (baseSlot + i).ToString(),
+                score1.ToString(),
+                score2.ToString(),
+                score3.ToString(),
+                average.ToString("F1"),
+                trend,
+                ScoreToKuangQing(Mathf.RoundToInt(average)));
+        }
+
+        lishiTable.RefreshGraph();
+        lishiTable.RefreshTable();
+        Debug.Log($"[CaokuangTable] 历史趋势使用模拟数据：工区={workArea}，日期={startDate}~{endDate}");
+    }
+
+    private static string ResolveInitialWorkArea(WorkAreaSelector selector)
+    {
+        if (selector != null)
+        {
+            string value = selector.GetSelectedWorkArea();
+            if (!string.IsNullOrWhiteSpace(value)) return value;
+            if (selector.selectedDisplayText != null && !string.IsNullOrWhiteSpace(selector.selectedDisplayText.text))
+                return selector.selectedDisplayText.text.Trim();
+        }
+        return "1车间1工区";
+    }
+
+    private static int ResolveMockBaseSlot(string workArea)
+    {
+        int workshop = 1;
+        int area = 1;
+        var matches = System.Text.RegularExpressions.Regex.Matches(workArea ?? string.Empty, @"\d+");
+
+        if (matches.Count >= 2)
+        {
+            int.TryParse(matches[0].Value, out workshop);
+            int.TryParse(matches[1].Value, out area);
+        }
+        else if (matches.Count == 1)
+        {
+            int value;
+            if (int.TryParse(matches[0].Value, out value))
+            {
+                if (!string.IsNullOrEmpty(workArea) && workArea.Contains("车间"))
+                    workshop = value;
+                else
+                    area = value;
+            }
+        }
+
+        workshop = Mathf.Max(1, workshop);
+        area = Mathf.Clamp(area, 1, 3);
+        return workshop * 1000 + 1 + (area - 1) * 55;
+    }
+
+    private static int StableTextSeed(string value)
+    {
+        int seed = 0;
+        if (string.IsNullOrEmpty(value)) return seed;
+        for (int i = 0; i < value.Length; i++)
+            seed = (seed * 31 + value[i]) & 0x7fffffff;
+        return seed;
     }
 
     // ================= 点击工具与帮助方法 =================

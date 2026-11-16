@@ -338,7 +338,7 @@ public class SlotNumberSelector : MonoBehaviour
     public void LoadSlotNumberDataFromGlobal()
     {
         Debug.Log("开始从全局数据加载槽号信息");
-        
+
         slotNumberItems.Clear();
         
         // 检查全局电解槽数据管理器是否存在且已加载数据
@@ -372,7 +372,10 @@ public class SlotNumberSelector : MonoBehaviour
         if (!ExtractWorkshopAndWorkAreaNumbers())
         {
             Debug.LogWarning("无法从文本框中提取车间号和工区号");
-            ShowDefaultData("请选择工区");
+            if (SceneManager.GetActiveScene().name == "gongyiquxian")
+                ClearSlotSelection();
+            else
+                ShowDefaultData("请选择工区");
             return;
         }
         
@@ -421,6 +424,16 @@ public class SlotNumberSelector : MonoBehaviour
         slotNumberItems.Clear();
         slotNumberItems.Add(message);
         UpdateUI();
+    }
+
+    private void ClearSlotSelection()
+    {
+        slotNumberItems.Clear();
+        selectedSlotNumber = string.Empty;
+        if (selectedDisplayText != null)
+            selectedDisplayText.text = string.Empty;
+        if (itemScrollRect != null)
+            PopulateScrollRect(itemScrollRect, slotNumberItems);
     }
     
     // 修改 ExtractWorkshopAndWorkAreaNumbers 方法，增加更详细的调试信息

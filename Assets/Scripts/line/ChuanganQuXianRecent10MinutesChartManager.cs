@@ -13,9 +13,8 @@ using XCharts.Runtime;
 namespace XCharts.Example
 {
     /// <summary>
-    /// 传感器曲线 - 最近10分钟视图。
-    /// 基于 ChuanganQuXianTemperatureChartManager 修改：
-    /// X轴显示最近 recentMinutes 分钟（每分钟一个数据点），而非24小时按小时聚合。
+    /// 阳极电流曲线 - 最近10分钟视图。
+    /// Frame 6 每2秒返回一个时间点，每个时间点包含48路阳极电流。
     /// </summary>
     [DisallowMultipleComponent]
     public class ChuanganQuXianRecent10MinutesChartManager : MonoBehaviour
@@ -23,13 +22,14 @@ namespace XCharts.Example
         [Header("API设置")]
         [SerializeField] private string apiUrl = "http://183.214.222.76:9000/api/Home/GetRemoteDataFromAlwit";
         [SerializeField] private string companyId = "1033";
-        [SerializeField] private int frameType = 8;
+        [SerializeField] private int frameType = 6;
         [SerializeField] private int connectionTimeout = 30;
-        [SerializeField] private string queryDate = "20250622";
 
         [Header("查询条件")]
         public TextMeshProUGUI potNameText;
         public Button applyFilterButton;
+        [SerializeField] private WorkAreaSelector workAreaSelector;
+        [SerializeField] private SlotNumberSelector slotNumberSelector;
 
         [Header("图表布局")]
         public GameObject chartPrefab;
@@ -46,25 +46,26 @@ namespace XCharts.Example
         [Header("运行控制")]
         [SerializeField] private bool autoLoadOnStart = false;
         [SerializeField] private bool showStatusOnScreen = false;
+        [SerializeField] private bool useMockDataFallback = true;
 
         [Header("绘图设置")]
         [SerializeField] private int valueCountPerRecord = 48;
         [SerializeField] private int valuesPerChart = 4;
-        [SerializeField] private int expectedBytesPerRecord = 102;
-        [SerializeField] private int recentMinutes = 10; // ★ 最近N分钟（每分钟一条记录）
+        [SerializeField] private int expectedBytesPerRecord = 96;
+        [SerializeField] private int recentMinutes = 10;
+        [SerializeField] private int sampleIntervalSeconds = 2;
 
         private readonly List<LineChart> chartInstances = new List<LineChart>();
         private readonly List<ParsedFrame> parsedFrames = new List<ParsedFrame>();
         private Coroutine bootstrapRoutine;
         private bool isLoading;
+        private bool reloadRequested;
         private string selectedPotName;
-        private List<string> minuteLabels = new List<string>(); // 本次渲染共享的X轴标签
+        private readonly List<string> timeLabels = new List<string>();
+        private readonly List<DateTime> timePoints = new List<DateTime>();
 
-        private const int FrameHeaderSize = 14;
+        private const int FrameHeaderSize = 12;
         private const int FrameTailSize = 2;
-        private const int DateBytes = 4;
-        private const int RecordNoBytes = 2;
-        private const int ValueBytes = 96;
 
         [Serializable]
         private class ParsedFrame
@@ -73,8 +74,7 @@ namespace XCharts.Example
             public int parsedFrameType;
             public int slot;
             public int dataLength;
-            public string dateText;
-            public int recordNo;
+            public bool isMock;
             public List<int[]> records = new List<int[]>();
         }
 
@@ -96,9 +96,28 @@ namespace XCharts.Example
 
         private void Start()
         {
+            if (slotNumberSelector == null)
+            {
+                slotNumberSelector = FindSceneComponent<SlotNumberSelector>();
+            }
+            if (workAreaSelector == null)
+            {
+                workAreaSelector = FindSceneComponent<WorkAreaSelector>();
+            }
+
+            if (slotNumberSelector != null && slotNumberSelector.OnSlotConfirmed != null)
+            {
+                slotNumberSelector.OnSlotConfirmed.RemoveListener(OnSlotConfirmed);
+                slotNumberSelector.OnSlotConfirmed.AddListener(OnSlotConfirmed);
+            }
+            if (workAreaSelector != null && workAreaSelector.OnWorkAreaConfirmedEvent != null)
+            {
+                workAreaSelector.OnWorkAreaConfirmedEvent.RemoveListener(OnWorkAreaConfirmed);
+                workAreaSelector.OnWorkAreaConfirmedEvent.AddListener(OnWorkAreaConfirmed);
+            }
             if (applyFilterButton != null)
             {
-                applyFilterButton.onClick.RemoveAllListeners();
+                applyFilterButton.onClick.RemoveListener(OnApplyFilter);
                 applyFilterButton.onClick.AddListener(OnApplyFilter);
             }
 
@@ -129,9 +148,53 @@ namespace XCharts.Example
             LoadTemperatureData();
         }
 
+        private void OnSlotConfirmed(string slotNumber)
+        {
+            if (!string.IsNullOrWhiteSpace(slotNumber))
+            {
+                selectedPotName = slotNumber.Trim();
+            }
+            LoadTemperatureData();
+        }
+
+        private void OnWorkAreaConfirmed(string workArea)
+        {
+            if (slotNumberSelector == null) return;
+
+            // 工区文本已由WorkAreaSelector更新，此时按新工区重建槽号列表。
+            slotNumberSelector.RefreshSlotNumberData();
+            string firstSlot = slotNumberSelector.GetSelectedSlotNumber();
+            if (!string.IsNullOrWhiteSpace(firstSlot) && Regex.IsMatch(firstSlot, @"^\d+$"))
+            {
+                selectedPotName = firstSlot;
+                if (potNameText != null) potNameText.text = firstSlot;
+                LoadTemperatureData();
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (slotNumberSelector != null && slotNumberSelector.OnSlotConfirmed != null)
+            {
+                slotNumberSelector.OnSlotConfirmed.RemoveListener(OnSlotConfirmed);
+            }
+            if (workAreaSelector != null && workAreaSelector.OnWorkAreaConfirmedEvent != null)
+            {
+                workAreaSelector.OnWorkAreaConfirmedEvent.RemoveListener(OnWorkAreaConfirmed);
+            }
+            if (applyFilterButton != null)
+            {
+                applyFilterButton.onClick.RemoveListener(OnApplyFilter);
+            }
+        }
+
         private void LoadTemperatureData()
         {
-            if (isLoading) return;
+            if (isLoading)
+            {
+                reloadRequested = true;
+                return;
+            }
             if (!gameObject.activeInHierarchy)
             {
                 ReportStatus("对象未激活，无法加载", true);
@@ -141,6 +204,12 @@ namespace XCharts.Example
             selectedPotName = ResolveSelectedSlotNumber();
             ClearCharts();
             parsedFrames.Clear();
+
+            // 演示时先显示模拟曲线；真实接口返回有效非零数据后会自动替换。
+            if (useMockDataFallback)
+            {
+                RenderMockData();
+            }
             StartCoroutine(FetchAndRender());
         }
 
@@ -149,7 +218,10 @@ namespace XCharts.Example
             isLoading = true;
             ShowLoading(true, $"正在读取最近{recentMinutes}分钟数据...");
 
-            string requestParam = $"{companyId}-{frameType}-{selectedPotName}-{queryDate}";
+            string requestCompanyId = !string.IsNullOrWhiteSpace(GlobalUserData.AlSerialPantId)
+                ? GlobalUserData.AlSerialPantId
+                : companyId;
+            string requestParam = $"{requestCompanyId}-{frameType}-{selectedPotName}";
             byte[] bodyRaw = Encoding.UTF8.GetBytes($"\"{requestParam}\"");
             ReportStatus($"请求参数: {requestParam}");
             ReportStatus($"请求地址: {apiUrl}");
@@ -171,31 +243,98 @@ namespace XCharts.Example
                 if (request.result != UnityWebRequest.Result.Success || string.IsNullOrWhiteSpace(responseText))
                 {
                     ReportStatus($"请求失败或为空: {request.error}", true);
-                    FinishLoading();
+                    FinishLoading(useMockDataFallback ? null : "阳极电流数据请求失败");
                     yield break;
                 }
 
                 if (!TryParseResponse(responseText, out var frame))
                 {
                     ReportStatus("响应解析失败，停止绘制", true);
-                    FinishLoading();
+                    FinishLoading(useMockDataFallback ? null : "暂无可用的阳极电流数据");
                     yield break;
                 }
 
-                parsedFrames.Clear();
-                parsedFrames.Add(frame);
-                ReportStatus($"真实帧解析完成: 记录数={frame.records.Count}, dataLength={frame.dataLength}");
-                RenderChartsFromFrames();
+                bool hasRealValues = frame.records.Any(values => values != null && values.Any(value => value != 0));
+                if (hasRealValues || !useMockDataFallback)
+                {
+                    parsedFrames.Clear();
+                    parsedFrames.Add(frame);
+                    ReportStatus($"真实帧解析完成: 记录数={frame.records.Count}, dataLength={frame.dataLength}");
+                    RenderChartsFromFrames();
+                }
+                else
+                {
+                    Debug.LogWarning($"[ChuanganQuXianRecent10MinutesChartManager] Frame 6 返回全零值，保留模拟曲线，槽号={selectedPotName}");
+                }
             }
 
             FinishLoading();
         }
 
-        private void FinishLoading()
+        private void RenderMockData()
         {
-            ShowLoading(false);
+            int pointCount = GetMaximumPointCount();
+            int slot = 1001;
+            int.TryParse(selectedPotName, out slot);
+            int seed = Mathf.Abs(slot * 397) % 997;
+
+            var frame = new ParsedFrame
+            {
+                enterpriseId = 0,
+                parsedFrameType = frameType,
+                slot = slot,
+                dataLength = pointCount * expectedBytesPerRecord,
+                isMock = true
+            };
+
+            for (int point = 0; point < pointCount; point++)
+            {
+                int[] values = new int[valueCountPerRecord];
+                float elapsedSeconds = point * Mathf.Max(1, sampleIntervalSeconds);
+                for (int sensor = 0; sensor < valueCountPerRecord; sensor++)
+                {
+                    int localSeries = sensor % valuesPerChart;
+                    bool isBGroup = sensor >= valueCountPerRecord / 2;
+                    float[] aBases = { 500f, 535f, 590f, 430f };
+                    float[] bBases = { 430f, 410f, 375f, 525f };
+                    float baseCurrent = (isBGroup ? bBases : aBases)[localSeries];
+                    baseCurrent += ((sensor / valuesPerChart) % 6) * 5f;
+
+                    float phase = sensor * 0.37f + seed * 0.01f;
+                    float slowWave = Mathf.Sin(elapsedSeconds * Mathf.PI * 2f / 300f + phase) * 32f;
+                    float mediumWave = Mathf.Sin(elapsedSeconds * Mathf.PI * 2f / 90f + sensor * 0.21f) * 12f;
+                    float fineWave = Mathf.Sin(elapsedSeconds * Mathf.PI * 2f / 35f + sensor * 0.53f) * 4f;
+                    values[sensor] = Mathf.Clamp(
+                        Mathf.RoundToInt(baseCurrent + slowWave + mediumWave + fineWave),
+                        280,
+                        780);
+                }
+                frame.records.Add(values);
+            }
+
+            parsedFrames.Clear();
+            parsedFrames.Add(frame);
+            RenderChartsFromFrames();
+            ReportStatus($"已生成阳极电流模拟曲线：槽号={slot}，时间点={pointCount}");
+        }
+
+        private void FinishLoading(string message = null)
+        {
+            ShowLoading(!string.IsNullOrEmpty(message), message);
             isLoading = false;
             ReportStatus($"绘图完成: {chartInstances.Count} 张图");
+
+            if (reloadRequested)
+            {
+                reloadRequested = false;
+                LoadTemperatureData();
+            }
+        }
+
+        private T FindSceneComponent<T>() where T : Component
+        {
+            return FindObjectsOfType<T>(true)
+                .FirstOrDefault(component => component != null && component.gameObject.scene == gameObject.scene);
         }
 
         private bool TryParseResponse(string responseText, out ParsedFrame frame)
@@ -240,6 +379,12 @@ namespace XCharts.Example
 
             ReportStatus($"响应帧信息 enterprise={enterpriseId}, frameType={parsedFrameType}, slot={slot}, dataLength={dataLength}");
 
+            if (parsedFrameType != frameType)
+            {
+                ReportStatus($"帧类型校验失败: 实际={parsedFrameType}, 期望={frameType}", true);
+                return false;
+            }
+
             if (offset + dataLength + FrameTailSize > frameData.Length)
             {
                 ReportStatus("数据长度校验失败", true);
@@ -257,10 +402,14 @@ namespace XCharts.Example
                 enterpriseId = enterpriseId,
                 parsedFrameType = parsedFrameType,
                 slot = slot,
-                dataLength = dataLength,
-                dateText = ReadDateText(frameData, offset),
-                recordNo = ReadUInt16(frameData, offset + DateBytes)
+                dataLength = dataLength
             };
+
+            if (expectedBytesPerRecord != valueCountPerRecord * 2 || dataLength % expectedBytesPerRecord != 0)
+            {
+                ReportStatus($"Frame 6 数据长度不符合预期: dataLength={dataLength}, pointSize={expectedBytesPerRecord}", true);
+                return false;
+            }
 
             int recordCount = dataLength / expectedBytesPerRecord;
             ReportStatus($"开始逐条解析真实记录，recordCount={recordCount}");
@@ -270,10 +419,9 @@ namespace XCharts.Example
                 if (recordOffset + expectedBytesPerRecord > offset + dataLength) break;
 
                 int[] values = new int[valueCountPerRecord];
-                int valueOffset = recordOffset + DateBytes + RecordNoBytes;
                 for (int i = 0; i < valueCountPerRecord; i++)
                 {
-                    values[i] = ReadUInt16(frameData, valueOffset + i * 2);
+                    values[i] = ReadUInt16(frameData, recordOffset + i * 2);
                 }
                 frame.records.Add(values);
                 if (recordIndex < 3 || recordIndex == recordCount - 1)
@@ -320,7 +468,7 @@ namespace XCharts.Example
             }
 
             var frame = parsedFrames[0];
-            int chartCount = 12;
+            int chartCount = Mathf.CeilToInt((float)valueCountPerRecord / valuesPerChart);
             Debug.Log($"[ChuanganQuXianRecent10MinutesChartManager] ★ 当前 chartSize={chartSize}, chartSpacing={chartSpacing}");
             float totalHeight = chartCount * (chartSize.y + chartSpacing) + chartPadding.y;
 
@@ -352,45 +500,50 @@ namespace XCharts.Example
                 Debug.Log($"[Content尺寸] srWidth={srWidth}, vpWidth={vpWidth}, 最终Content宽={viewportWidth}, 高={totalHeight}");
             }
 
-            // ★ 生成本次渲染共享的X轴标签：最近 recentMinutes 分钟（以当前时间为锚点）
-            BuildMinuteLabels(frame.records.Count);
-            ReportStatus($"总记录数={frame.records.Count}，本次绘制最近 {minuteLabels.Count} 分钟");
+            BuildTimeLabels(frame.records.Count);
+            ReportStatus($"总时间点={frame.records.Count}，本次绘制={timeLabels.Count}点，采样间隔={sampleIntervalSeconds}秒");
             ReportStatus($"图表数量={chartCount}，每图曲线数={valuesPerChart}，总值数={valueCountPerRecord}");
-            if (minuteLabels.Count > 0)
+            if (timeLabels.Count > 0)
             {
-                ReportStatus($"绘制时间范围：{minuteLabels[0]} ~ {minuteLabels[minuteLabels.Count - 1]}，每分钟一个横坐标");
+                ReportStatus($"绘制时间范围：{timeLabels[0]} ~ {timeLabels[timeLabels.Count - 1]}");
             }
 
             for (int i = 0; i < chartCount; i++)
             {
                 var meta = GetGroupMeta(i);
-                ReportStatus($"准备绘制图{i + 1}/12: {GetBusinessChartTitle(i)}，曲线={GetSeriesName(meta.groupPrefix, meta.groupIndex, 1)}, {GetSeriesName(meta.groupPrefix, meta.groupIndex, 2)}, {GetSeriesName(meta.groupPrefix, meta.groupIndex, 3)}, {GetSeriesName(meta.groupPrefix, meta.groupIndex, 4)}");
+                ReportStatus($"准备绘制图{i + 1}/{chartCount}: {GetBusinessChartTitle(i)}，曲线={GetSeriesName(meta.groupPrefix, meta.groupIndex, 1)}, {GetSeriesName(meta.groupPrefix, meta.groupIndex, 2)}, {GetSeriesName(meta.groupPrefix, meta.groupIndex, 3)}, {GetSeriesName(meta.groupPrefix, meta.groupIndex, 4)}");
                 CreateSingleChart(frame, i);
             }
         }
 
         /// <summary>
-        /// 生成最近N分钟的X轴标签（HH:mm），锚点为当前时间。
-        /// 记录按分钟等间隔存储，最后一条记录对应"现在"。
+        /// 生成最近N分钟的X轴标签，最后一个时间点对应当前时间。
         /// </summary>
-        private void BuildMinuteLabels(int totalRecordCount)
+        private void BuildTimeLabels(int totalRecordCount)
         {
-            minuteLabels.Clear();
-            int count = Mathf.Clamp(Mathf.Min(recentMinutes, totalRecordCount), 0, recentMinutes);
+            timeLabels.Clear();
+            timePoints.Clear();
+            int count = Mathf.Min(GetMaximumPointCount(), totalRecordCount);
             if (count <= 0) return;
 
             DateTime now = DateTime.Now;
             for (int i = 0; i < count; i++)
             {
-                DateTime t = now.AddMinutes(-(count - 1 - i));
-                minuteLabels.Add(t.ToString("HH:mm"));
+                DateTime t = now.AddSeconds(-(count - 1 - i) * sampleIntervalSeconds);
+                timeLabels.Add(t.ToString("HH:mm:ss"));
+                timePoints.Add(t);
             }
         }
 
-        /// <summary>本次实际绘制的数据条数（不超过 recentMinutes）</summary>
+        private int GetMaximumPointCount()
+        {
+            return Mathf.Max(1, recentMinutes * 60 / Mathf.Max(1, sampleIntervalSeconds));
+        }
+
+        /// <summary>本次实际绘制的数据点数。</summary>
         private int GetPointCount(ParsedFrame frame)
         {
-            return Mathf.Clamp(Mathf.Min(recentMinutes, frame.records.Count), 0, recentMinutes);
+            return Mathf.Min(GetMaximumPointCount(), frame.records.Count);
         }
 
         private void CreateSingleChart(ParsedFrame frame, int chartIndex)
@@ -488,30 +641,29 @@ namespace XCharts.Example
                 title.location.top = 0.03f;
             }
 
-            // ---- X轴：最近N分钟，每分钟一个横坐标 ----
+            // ---- X轴：使用真实时间轴，数据点按时间戳定位 ----
             var xAxis = chart.EnsureChartComponent<XAxis>();
             if (xAxis != null)
             {
-                xAxis.type = Axis.AxisType.Category;
+                xAxis.type = Axis.AxisType.Time;
                 xAxis.axisLine.show = true;
                 xAxis.axisTick.show = true;
-                xAxis.boundaryGap = true;
+                xAxis.boundaryGap = false;
+                xAxis.splitNumber = 5;
                 if (xAxis.axisLabel != null)
                 {
                     xAxis.axisLabel.show = true;
                     xAxis.axisLabel.interval = 0;
+                    xAxis.axisLabel.numericFormatter = "date:HH:mm";
+                    xAxis.axisLabel.showStartLabel = true;
+                    xAxis.axisLabel.showEndLabel = true;
                     xAxis.axisLabel.rotate = 0;
                     if (xAxis.axisLabel.textStyle != null)
                     {
                         xAxis.axisLabel.textStyle.color = Color.white;
-                        xAxis.axisLabel.textStyle.fontSize = 18;
+                        xAxis.axisLabel.textStyle.fontSize = 14;
                         xAxis.axisLabel.textStyle.fontStyle = FontStyle.Bold;
                     }
-                }
-                // 每分钟一个标签（数据点少，全部显示）
-                for (int i = 0; i < minuteLabels.Count; i++)
-                {
-                    chart.AddXAxisData(minuteLabels[i]);
                 }
                 xAxis.SetAllDirty();
             }
@@ -546,28 +698,38 @@ namespace XCharts.Example
             var values = ExtractValuesForChart(frame, meta.startSensorIndex, meta.endSensorIndex);
             if (values.Count > 0 && yAxis != null)
             {
-                double min = values.Min();
-                double max = values.Max();
-                double range = max - min;
-                double padding;
-                if (range < 1)
-                    padding = 5;
-                else if (range < 10)
-                    padding = range * 0.5;
-                else
-                    padding = range * 0.25;
-
-                yAxis.min = Math.Max(0, min - padding);
-                yAxis.max = max + padding;
-
-                if (yAxis.max - yAxis.min < 20)
+                if (frame.isMock)
                 {
-                    double center = (yAxis.min + yAxis.max) / 2.0;
-                    yAxis.min = Math.Max(0, center - 10);
-                    yAxis.max = center + 10;
+                    yAxis.min = 0;
+                    yAxis.max = 900;
+                    yAxis.splitNumber = 9;
+                }
+                else
+                {
+                    double min = values.Min();
+                    double max = values.Max();
+                    double range = max - min;
+                    double padding;
+                    if (range < 1)
+                        padding = 5;
+                    else if (range < 10)
+                        padding = range * 0.5;
+                    else
+                        padding = range * 0.25;
+
+                    yAxis.min = Math.Max(0, min - padding);
+                    yAxis.max = max + padding;
+
+                    if (yAxis.max - yAxis.min < 20)
+                    {
+                        double center = (yAxis.min + yAxis.max) / 2.0;
+                        yAxis.min = Math.Max(0, center - 10);
+                        yAxis.max = center + 10;
+                    }
+
+                    yAxis.splitNumber = 6;
                 }
 
-                yAxis.splitNumber = 6;
                 yAxis.SetAllDirty();
             }
 
@@ -604,6 +766,41 @@ namespace XCharts.Example
             {
                 tooltip.show = true;
                 tooltip.type = Tooltip.Type.Line;
+                tooltip.trigger = Tooltip.Trigger.Axis;
+                tooltip.triggerOn = Tooltip.TriggerOn.MouseMove;
+                tooltip.showContent = true;
+                // 当前图表字体不含中文提示文字，标题直接显示时间，避免出现方框乱码。
+                tooltip.titleFormatter = "{b}";
+                // 使用单列内容，避免三列布局在窄屏上把数值挤出背景框。
+                tooltip.itemFormatter = "{.} {a}  {c}";
+                tooltip.numericFormatter = "F0";
+                tooltip.backgroundColor = new Color32(255, 255, 255, 248);
+                tooltip.borderColor = new Color32(170, 170, 170, 255);
+                tooltip.borderWidth = 1f;
+                tooltip.fixedWidth = 0f;
+                tooltip.minWidth = 140f;
+                tooltip.paddingLeftRight = 8;
+                tooltip.paddingTopBottom = 6;
+                tooltip.titleHeight = 19f;
+                tooltip.itemHeight = 19f;
+                if (tooltip.titleLabelStyle != null && tooltip.titleLabelStyle.textStyle != null)
+                {
+                    tooltip.titleLabelStyle.textStyle.color = new Color32(40, 40, 40, 255);
+                    tooltip.titleLabelStyle.textStyle.fontSize = 13;
+                    tooltip.titleLabelStyle.textStyle.alignment = TextAnchor.MiddleLeft;
+                }
+                if (tooltip.contentLabelStyles != null)
+                {
+                    foreach (var labelStyle in tooltip.contentLabelStyles)
+                    {
+                        if (labelStyle != null && labelStyle.textStyle != null)
+                        {
+                            labelStyle.textStyle.color = new Color32(40, 40, 40, 255);
+                            labelStyle.textStyle.fontSize = 13;
+                            labelStyle.textStyle.alignment = TextAnchor.MiddleLeft;
+                        }
+                    }
+                }
                 if (tooltip.lineStyle != null)
                 {
                     tooltip.lineStyle.show = true;
@@ -613,14 +810,14 @@ namespace XCharts.Example
 
             Color[] colors =
             {
-                new Color32(160, 96, 255, 255),
-                new Color32(84, 183, 98, 255),
-                new Color32(240, 198, 84, 255),
-                new Color32(233, 76, 126, 255)
+                new Color32(50, 105, 255, 255),
+                new Color32(65, 190, 90, 255),
+                new Color32(255, 174, 45, 255),
+                new Color32(235, 65, 220, 255)
             };
 
             int pointCount = GetPointCount(frame);
-            int startIndex = frame.records.Count - pointCount; // 最近N条记录的起始索引
+            int startIndex = frame.records.Count - pointCount;
 
             for (int s = 0; s < valuesPerChart; s++)
             {
@@ -634,8 +831,15 @@ namespace XCharts.Example
                 if (serie.lineStyle != null)
                 {
                     serie.lineStyle.color = colors[s % colors.Length];
-                    serie.lineStyle.width = 3f;
+                    serie.lineStyle.width = 2f;
                 }
+
+                if (serie.itemStyle != null)
+                {
+                    serie.itemStyle.color = colors[s % colors.Length];
+                }
+
+                serie.lineType = LineType.Normal;
 
                 if (serie.symbol != null)
                 {
@@ -649,22 +853,27 @@ namespace XCharts.Example
 
                 serie.large = false;
 
-                // ★ 不做小时聚合：每条记录（每分钟）直接作为一个数据点
+                // 不聚合，完整保留Frame 6的每个2秒采样点。
                 for (int i = 0; i < pointCount; i++)
                 {
                     var pointValues = frame.records[startIndex + i];
+                    DateTime pointTime = i < timePoints.Count
+                        ? timePoints[i]
+                        : DateTime.Now.AddSeconds(-(pointCount - 1 - i) * sampleIntervalSeconds);
+                    string pointName = pointTime.ToString("HH:mm:ss");
                     if (pointValues != null && pointValues.Length > globalSensorIndex)
                     {
-                        chart.AddData(s, pointValues[globalSensorIndex]);
+                        chart.AddData(s, pointTime, pointValues[globalSensorIndex], pointName);
                     }
                     else
                     {
-                        chart.AddData(s, 0);
+                        chart.AddData(s, pointTime, 0, pointName);
                     }
                 }
             }
 
             chart.RefreshChart();
+            chart.SetAllDirty();
         }
 
         private List<double> ExtractValuesForChart(ParsedFrame frame, int startSensorIndex, int endSensorIndex)
@@ -675,7 +884,7 @@ namespace XCharts.Example
             startSensorIndex = Mathf.Clamp(startSensorIndex, 0, valueCountPerRecord - 1);
             endSensorIndex = Mathf.Clamp(endSensorIndex, startSensorIndex, valueCountPerRecord - 1);
 
-            // ★ 仅提取最近N分钟（与数据添加逻辑保持一致）
+            // 仅提取当前绘制范围内的数据。
             int pointCount = GetPointCount(frame);
             int startIndex = frame.records.Count - pointCount;
             for (int i = startIndex; i < frame.records.Count; i++)
@@ -706,7 +915,7 @@ namespace XCharts.Example
         private GroupMeta GetGroupMeta(int chartIndex)
         {
             int localIndex = chartIndex % 6;
-            int chartStart = localIndex * valuesPerChart;
+            int chartStart = chartIndex * valuesPerChart;
             return new GroupMeta
             {
                 groupPrefix = chartIndex < 6 ? "A" : "B",
@@ -818,15 +1027,6 @@ namespace XCharts.Example
         private int ReadUInt16(byte[] data, int offset)
         {
             return (data[offset] << 8) | data[offset + 1];
-        }
-
-        private string ReadDateText(byte[] data, int offset)
-        {
-            int year = 2000 + data[offset];
-            int month = data[offset + 1];
-            int day = data[offset + 2];
-            int hour = data[offset + 3];
-            return $"{year:0000}{month:00}{day:00}{hour:00}";
         }
 
         private int ReadInt32(byte[] data, int offset)

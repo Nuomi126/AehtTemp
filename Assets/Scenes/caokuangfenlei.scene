@@ -6385,7 +6385,7 @@ MonoBehaviour:
         m_TMPSpriteAsset: {fileID: 0}
   - m_Show: 1
     m_Content: "\u65E5\u671F"
-    m_Width: 100
+    m_Width: 180
     m_DataLabelStyle:
       m_Show: 0
       m_Position: 0
@@ -26038,6 +26038,7 @@ MonoBehaviour:
   dangriWorkAreaBtn: {fileID: 1858714534}
   lishiWorkAreaBtn: {fileID: 862372318}
   panelSlotDetail: {fileID: 1803634406}
+  useMockData: 1
 --- !u!114 &1007435744
 MonoBehaviour:
   m_ObjectHideFlags: 0

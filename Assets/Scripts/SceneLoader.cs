@@ -7,21 +7,25 @@ public class SceneLoader : MonoBehaviour
 {
     // 静态变量记住当前选中的场景
     public static string currentSelectedScene = "";
-    
+
     public string targetSceneName;
     
     [Header("按钮颜色设置")]
     public Color selectedColor = new Color(0.2f, 0.6f, 1f, 1f);
     public Color normalColor = Color.white;
+    // 保留字段以兼容现有场景数据；菜单切换不再人为等待。
     public float delayBeforeSceneLoad = 0.2f;
     
     [Header("默认选中设置")]
     public bool isDefaultSelected = false; // 是否为默认选中状态
     
     private Button button;
+    private static bool isSceneLoading;
     
     private void Start()
     {
+        // 新场景激活后恢复菜单可用状态。
+        isSceneLoading = false;
         button = GetComponent<Button>();
         
         if (button != null)
@@ -64,24 +68,19 @@ public class SceneLoader : MonoBehaviour
     
     private void OnButtonClick()
     {
-		// 如果当前场景和目标场景相同，则不切换
-		if (currentSelectedScene == targetSceneName)
-		{
-			//Debug.Log("OnButtonClick 当前场景和目标场景相同，不切换！");
+        if (isSceneLoading)
+        {
             return;
-		}
-		
-        // 先变色
-		SetButtonColor(selectedColor);
+        }
 
-        
-        // 延迟后切换场景
-        StartCoroutine(LoadSceneWithDelay());
-    }
-    
-    private IEnumerator LoadSceneWithDelay()
-    {        
-        yield return new WaitForSeconds(delayBeforeSceneLoad);
+        // 以实际激活场景为准，避免静态选中状态异常时重复加载。
+        if (SceneManager.GetActiveScene().name == targetSceneName)
+        {
+            return;
+        }
+
+        // 先变色
+        SetButtonColor(selectedColor);
         LoadTargetScene();
     }
     
@@ -99,42 +98,59 @@ public class SceneLoader : MonoBehaviour
     
     public void LoadTargetScene()
     {
-        if (!string.IsNullOrEmpty(targetSceneName))
-        {
-            // 记住选中的场景
-            currentSelectedScene = targetSceneName;
-            
-            Debug.Log("正在尝试加载场景: " + targetSceneName);
-            SceneManager.LoadScene(targetSceneName);
-        }
-        else
-        {
-            Debug.LogWarning("目标场景名称未设置！");
-        }
+        BeginLoadScene(targetSceneName);
     }
-    
+
     public void LoadScene(string sceneName)
     {
-        if (!string.IsNullOrEmpty(sceneName))
+        BeginLoadScene(sceneName);
+    }
+
+    private void BeginLoadScene(string sceneName)
+    {
+        if (isSceneLoading)
         {
-            currentSelectedScene = sceneName;
-            Debug.Log("正在尝试加载场景: " + sceneName);
-            SceneManager.LoadScene(sceneName);
+            return;
         }
-        else
+
+        if (string.IsNullOrEmpty(sceneName))
         {
             Debug.LogWarning("场景名称不能为空！");
+            return;
+        }
+
+        isSceneLoading = true;
+        currentSelectedScene = sceneName;
+        if (button != null) button.interactable = false;
+
+        Debug.Log("正在异步加载场景: " + sceneName);
+        StartCoroutine(LoadSceneAsync(sceneName));
+    }
+
+    private IEnumerator LoadSceneAsync(string sceneName)
+    {
+        AsyncOperation operation = SceneManager.LoadSceneAsync(sceneName, LoadSceneMode.Single);
+        if (operation == null)
+        {
+            isSceneLoading = false;
+            if (button != null) button.interactable = true;
+            Debug.LogError("无法启动场景加载: " + sceneName);
+            yield break;
+        }
+
+        while (!operation.isDone)
+        {
+            yield return null;
         }
     }
     
     public void ReturnToMainMenu()
     {
-        currentSelectedScene = "MainScene";
-        SceneManager.LoadScene("MainScene");
+        BeginLoadScene("MainScene");
     }
     
     public void ReloadCurrentScene()
     {
-        SceneManager.LoadScene(SceneManager.GetActiveScene().name);
+        BeginLoadScene(SceneManager.GetActiveScene().name);
     }
 }

@@ -222,6 +222,9 @@ public class StatisticsReportManager : MonoBehaviour
     #region 数据存储
     private StatisticsReportResponse currentReportData;
     private string queryDate; // 查询日期
+    private int frame72RequestVersion;
+    private int reportDataVersion;
+    private readonly int[] renderedDataVersions = { -1, -1, -1, -1, -1 };
     
     private enum TabType
     {
@@ -450,7 +453,7 @@ public class StatisticsReportManager : MonoBehaviour
         {
             if (table == efficiencyTable)
             {
-                table.columnStyle.columnWidth = 120f; // 效应报表列宽设为120
+                table.columnStyle.columnWidth = 160f; // 效应报表表头较长，避免文字重叠
             }
             else
             {
@@ -472,25 +475,22 @@ public class StatisticsReportManager : MonoBehaviour
         {
             case TabType.Voltage:
                 FillVoltageTable();
-                UpdateTableFont(voltageTable);
                 break;
             case TabType.Effect:
                 FillEffectTable();
-                UpdateTableFont(efficiencyTable);
                 break;
             case TabType.Feeding:
                 FillFeedingTable();
-                UpdateTableFont(feedingTable);
                 break;
             case TabType.Needle:
                 FillNeedleTable(needleTable);
-                UpdateTableFont(needleTable);
                 break;
             case TabType.Process:
                 FillProcessTable(processTable);
-                UpdateTableFont(processTable);
                 break;
         }
+
+        renderedDataVersions[(int)currentTab] = reportDataVersion;
     }
     #endregion
 
@@ -642,6 +642,7 @@ public class StatisticsReportManager : MonoBehaviour
                             code = 200,
                             msg = "Success"
                         };
+                        reportDataVersion++;
                         
                         Debug.Log($"✓ 解析完成: {reports.Count} 条记录");
                         
@@ -1007,10 +1008,11 @@ public class StatisticsReportManager : MonoBehaviour
     public void FetchFrame72ReportByWorkArea(int workshopNumber, int workAreaNumber, string startDate, string endDate)
     {
         Debug.Log($"[FetchFrame72] 方法被调用 - 车间:{workshopNumber}, 工区:{workAreaNumber}, 日期:{startDate}-{endDate}");
-        StartCoroutine(FetchFrame72ReportByWorkAreaAsync(workshopNumber, workAreaNumber, startDate, endDate));
+        int requestVersion = ++frame72RequestVersion;
+        StartCoroutine(FetchFrame72ReportByWorkAreaAsync(workshopNumber, workAreaNumber, startDate, endDate, requestVersion));
     }
 
-    private System.Collections.IEnumerator FetchFrame72ReportByWorkAreaAsync(int workshopNumber, int workAreaNumber, string startDate, string endDate)
+    private System.Collections.IEnumerator FetchFrame72ReportByWorkAreaAsync(int workshopNumber, int workAreaNumber, string startDate, string endDate, int requestVersion)
     {
         Debug.Log($"[Frame72协程] 开始批量请求...");
         
@@ -1026,6 +1028,12 @@ public class StatisticsReportManager : MonoBehaviour
                 break;
             }
             yield return null;
+        }
+
+        // 用户已经切换了新的筛选条件，旧请求不再继续更新界面。
+        if (requestVersion != frame72RequestVersion)
+        {
+            yield break;
         }
 
         if (GlobalElectrolyticCellDataManager.Instance != null && GlobalElectrolyticCellDataManager.Instance.isDataLoaded)
@@ -1083,6 +1091,7 @@ public class StatisticsReportManager : MonoBehaviour
             code = 200,
             msg = "Loading..."
         };
+        reportDataVersion++;
         
         Debug.Log($"[Frame72] ✓ 先填充 {allReports.Count} 个槽号到表格");
         FillCurrentTabTable();
@@ -1096,6 +1105,11 @@ public class StatisticsReportManager : MonoBehaviour
         // 遍历每个槽号发起请求
         for (int i = 0; i < slotNumbers.Count; i++)
         {
+            if (requestVersion != frame72RequestVersion)
+            {
+                yield break;
+            }
+
             ushort slotNumber = slotNumbers[i];
             
             // Frame 72: 企业ID-72-槽号-起始日期-终止日期
@@ -1111,6 +1125,12 @@ public class StatisticsReportManager : MonoBehaviour
             webRequest.SetRequestHeader("Content-Type", "application/json");
             
             yield return webRequest.SendWebRequest();
+
+            if (requestVersion != frame72RequestVersion)
+            {
+                webRequest.Dispose();
+                yield break;
+            }
             
             if (webRequest.result == UnityWebRequest.Result.Success)
             {
@@ -1154,21 +1174,19 @@ public class StatisticsReportManager : MonoBehaviour
             
             webRequest.Dispose();
             
-            // 每10个槽号更新一次表格
-            if ((i + 1) % 10 == 0 || i == slotNumbers.Count - 1)
-            {
-                currentReportData.rows = allReports.ToArray();
-                FillCurrentTabTable();
-                Debug.Log($"[Frame72] 已处理 {i + 1}/{slotNumbers.Count} 个槽号，更新表格");
-            }
-            
             // 添加小延迟避免请求过快
             yield return new WaitForSeconds(0.05f);
+        }
+
+        if (requestVersion != frame72RequestVersion)
+        {
+            yield break;
         }
         
         // 最终更新
         currentReportData.rows = allReports.ToArray();
         currentReportData.msg = $"Success ({successCount}/{slotNumbers.Count} slots)";
+        reportDataVersion++;
         
         Debug.Log($"[Frame72] ✓ 批量请求完成，共 {allReports.Count} 个槽号，{successCount} 个有数据");
         
@@ -1222,9 +1240,7 @@ public class StatisticsReportManager : MonoBehaviour
         
         Debug.Log($"UpdateTableFont 完成: 表头 {headerCount} 个, 数据 {dataCount} 个");
         
-        // 强制刷新表格
-        table.SetAllDirty();
-        table.RefreshGraph();
+        // TMP 文本在更换字体后会自行刷新，无需再重建整张表。
     }
 
     /// <summary>
@@ -1316,7 +1332,6 @@ public class StatisticsReportManager : MonoBehaviour
                 row.data[4].type = DataType.Double;
             }
 
-            targetTable.RefreshGraph();
             targetTable.RefreshTable();
             
             // 刷新表格后应用字体
@@ -1350,8 +1365,14 @@ public class StatisticsReportManager : MonoBehaviour
 
         try
         {
-            // 设置6列表头
-            targetTable.SetColumns(new List<string> { "槽号", "效应次数", "闪烁效应次数", "持续时间", "均压", "功耗" });
+            // 效应表使用两行表头和独立列宽，在单屏内完整显示六列。
+            targetTable.SetColumns(new List<string> { "槽号", "效应次数", "闪烁效应\n次数", "持续时间", "均压", "功耗" });
+            targetTable.columnHeaderStyle.height = 90f;
+            float[] effectColumnWidths = { 100f, 130f, 150f, 140f, 100f, 100f };
+            for (int columnIndex = 0; columnIndex < effectColumnWidths.Length; columnIndex++)
+            {
+                targetTable.columns[columnIndex].width = effectColumnWidths[columnIndex];
+            }
             targetTable.ClearData();
 
             for (int i = 0; i < currentReportData.rows.Length; i++)
@@ -1388,7 +1409,6 @@ public class StatisticsReportManager : MonoBehaviour
                 row.data[5].type = DataType.Double;
             }
 
-            targetTable.RefreshGraph();
             targetTable.RefreshTable();
             UpdateTableFont(targetTable);
 
@@ -1467,7 +1487,6 @@ public class StatisticsReportManager : MonoBehaviour
                 row.data[6].type = DataType.Double;
             }
 
-            targetTable.RefreshGraph();
             targetTable.RefreshTable();
             UpdateTableFont(targetTable);
 
@@ -1536,7 +1555,6 @@ public class StatisticsReportManager : MonoBehaviour
                 row.data[5].type = DataType.Double;
             }
 
-            table.RefreshGraph();
             table.RefreshTable();
             UpdateTableFont(table);
 
@@ -1609,7 +1627,6 @@ public class StatisticsReportManager : MonoBehaviour
                 row.data[6].type = DataType.Double;
             }
 
-            table.RefreshGraph();
             table.RefreshTable();
             UpdateTableFont(table);
 
@@ -1754,12 +1771,12 @@ public class StatisticsReportManager : MonoBehaviour
         currentTab = tabType;
         Debug.Log($"=== 切换到Tab: {tabType}，填充数据: {fillData} ===");
         
-        // 隐藏所有表格
-        if (voltageTable != null) voltageTable.gameObject.SetActive(false);
-        if (efficiencyTable != null) efficiencyTable.gameObject.SetActive(false);
-        if (feedingTable != null) feedingTable.gameObject.SetActive(false);
-        if (needleTable != null) needleTable.gameObject.SetActive(false);
-        if (processTable != null) processTable.gameObject.SetActive(false);
+        // 直接设置目标状态，避免先隐藏再显示目标表格导致整表重建和闪烁。
+        if (voltageTable != null) voltageTable.gameObject.SetActive(tabType == TabType.Voltage);
+        if (efficiencyTable != null) efficiencyTable.gameObject.SetActive(tabType == TabType.Effect);
+        if (feedingTable != null) feedingTable.gameObject.SetActive(tabType == TabType.Feeding);
+        if (needleTable != null) needleTable.gameObject.SetActive(tabType == TabType.Needle);
+        if (processTable != null) processTable.gameObject.SetActive(tabType == TabType.Process);
         
         // 重置按钮颜色
         SetButtonColor(btnDianya, false);
@@ -1772,30 +1789,27 @@ public class StatisticsReportManager : MonoBehaviour
         switch (tabType)
         {
             case TabType.Voltage:
-                if (voltageTable != null) voltageTable.gameObject.SetActive(true);
                 SetButtonColor(btnDianya, true);
-                if (fillData && currentReportData != null) FillVoltageTable();
                 break;
             case TabType.Effect:
-                if (efficiencyTable != null) efficiencyTable.gameObject.SetActive(true);
                 SetButtonColor(btnXiaoying, true);
-                if (fillData && currentReportData != null) FillEffectTable();
                 break;
             case TabType.Feeding:
-                if (feedingTable != null) feedingTable.gameObject.SetActive(true);
                 SetButtonColor(btnXialiao, true);
-                if (fillData && currentReportData != null) FillFeedingTable();
                 break;
             case TabType.Needle:
-                if (needleTable != null) needleTable.gameObject.SetActive(true);
                 SetButtonColor(btnZhenbai, true);
-                if (fillData && currentReportData != null) FillNeedleTable(needleTable);
                 break;
             case TabType.Process:
-                if (processTable != null) processTable.gameObject.SetActive(true);
                 SetButtonColor(btnGongyi, true);
-                if (fillData && currentReportData != null) FillProcessTable(processTable);
                 break;
+        }
+
+        // 同一批数据已经生成过的表格直接复用，避免菜单切换时反复重建。
+        if (fillData && currentReportData != null &&
+            renderedDataVersions[(int)tabType] != reportDataVersion)
+        {
+            FillCurrentTabTable();
         }
     }
     

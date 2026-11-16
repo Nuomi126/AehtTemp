@@ -102,10 +102,19 @@ namespace ZoneMonitor
 
     public class ZoneMonitorDataManager : MonoBehaviour
     {
+        private const int SectionMonitorFrameType = 2;
+        private const int SectionMonitorRecordSize = 41;
+
         public static ZoneMonitorDataManager Instance;
 
-        public string companyIndex = "1"; // 一厂/二厂等
-        public string currentWorkAreaId = "1"; // 当前选中的工区
+        public string companyIndex = "1"; // 当前车间号，仅用于界面显示
+        public string currentWorkAreaId = "1"; // 接口使用的全局工区ID
+
+        [SerializeField] private string defaultEnterpriseId = "1033";
+        [SerializeField] private bool useMockDataWhenUnavailable = true;
+
+        private string currentWorkAreaDisplayName = "1工区";
+        private int currentLocalWorkAreaNumber = 1;
         
         private string apiUrl = "http://183.214.222.76:9000/api/Home/GetRemoteDataFromAlwit"; 
         
@@ -119,98 +128,124 @@ namespace ZoneMonitor
         public event OnDataUpdatedHandler OnDataUpdated;
 
         private Coroutine pollingCoroutine;
+        private int requestGeneration;
+
+        public string CurrentWorkAreaDisplayName
+        {
+            get
+            {
+                return string.IsNullOrWhiteSpace(currentWorkAreaDisplayName)
+                    ? currentWorkAreaId + "工区"
+                    : currentWorkAreaDisplayName;
+            }
+        }
 
         private void Awake()
         {
             if (Instance == null) Instance = this;
-            else Destroy(gameObject);
+            else
+            {
+                Destroy(gameObject);
+                return;
+            }
         }
 
         private void Start()
         {
-            Debug.LogWarning($"[ZoneMonitorDataManager] Start 初始化，立刻使用参数发起请求：车间:{companyIndex} 工区:{currentWorkAreaId}");
+            Debug.LogWarning(
+                $"[ZoneMonitorDataManager] Start 初始化：企业:{ResolveEnterpriseId()} 车间:{companyIndex} 工区ID:{currentWorkAreaId}");
             StartMonitor();
         }
 
-    // --- 给你的工区选择按钮/下拉框/WorkAreaSelector调用的方法 ---
-    // 参数传入格式类似 "1车间1工区" 
-    public void OnConditionSelected(string formattedAreaString)
-    {
-        Debug.LogWarning($"[ZoneMonitorDataManager] ---> 接收到工区切换事件: {formattedAreaString} <---");
-        
-        if (string.IsNullOrEmpty(formattedAreaString)) 
+        // WorkAreaSelector 传入格式类似 "1车间1工区"。
+        public void OnConditionSelected(string formattedAreaString)
         {
-            Debug.LogWarning("[ZoneMonitorDataManager] 收到的工区字符串为空，跳过处理");
-            return;
-        }
+            Debug.LogWarning($"[ZoneMonitorDataManager] 接收到工区切换事件: {formattedAreaString}");
 
-        // 尝试解析 "X车间Y工区" 格式
-        var match = System.Text.RegularExpressions.Regex.Match(formattedAreaString, @"(\d+).*?(\d+)");
-        if (match.Success)
-        {
-            companyIndex = match.Groups[1].Value;
-            currentWorkAreaId = match.Groups[2].Value;
-            Debug.LogWarning($"[ZoneMonitorDataManager] 正则解析工区字符成功，车间:{companyIndex}, 工区:{currentWorkAreaId}");
-        }
-        else
-        {
-            // 如果传进来的只认出一个数字或者其它情况：
-            var singleMatch = System.Text.RegularExpressions.Regex.Match(formattedAreaString, @"\d+");
-            if (singleMatch.Success)
+            if (string.IsNullOrWhiteSpace(formattedAreaString))
             {
-                currentWorkAreaId = singleMatch.Value;
-                Debug.LogWarning($"[ZoneMonitorDataManager] 只提取到部分数字，将尝试设为工区:{currentWorkAreaId} (车间保留:{companyIndex})");
+                Debug.LogWarning("[ZoneMonitorDataManager] 收到的工区字符串为空，跳过处理");
+                return;
+            }
+
+            string selectedName = formattedAreaString.Trim();
+            WorkAreaData matchedArea = FindWorkArea(selectedName);
+            if (matchedArea != null)
+            {
+                companyIndex = matchedArea.WorkshopNumber;
+                currentWorkAreaId = matchedArea.WorkAreaNumber;
+                currentLocalWorkAreaNumber = ExtractLocalWorkAreaNumber(matchedArea.WorkAreaName, currentWorkAreaId);
+                currentWorkAreaDisplayName = currentLocalWorkAreaNumber + "工区";
             }
             else
             {
-                Debug.LogWarning($"[ZoneMonitorDataManager] 完全无法解析 {formattedAreaString} 里的数字！强制使用原始字符串。");
-                currentWorkAreaId = formattedAreaString;
+                // 登录工区配置暂未加载时保留兼容路径，但只作为兜底。
+                var match = System.Text.RegularExpressions.Regex.Match(selectedName, @"(\d+)\D+(\d+)\s*工区");
+                if (!match.Success)
+                {
+                    Debug.LogError($"[ZoneMonitorDataManager] 无法识别工区 '{selectedName}'，本次不发起请求。");
+                    return;
+                }
+
+                companyIndex = match.Groups[1].Value;
+                currentWorkAreaId = match.Groups[2].Value;
+                currentLocalWorkAreaNumber = int.Parse(match.Groups[2].Value);
+                currentWorkAreaDisplayName = currentLocalWorkAreaNumber + "工区";
+                Debug.LogWarning(
+                    $"[ZoneMonitorDataManager] 未找到登录工区映射，临时使用显示编号 {currentWorkAreaId}。" +
+                    "二车间等场景可能需要等待工区配置加载完成。");
             }
+
+            Debug.LogWarning(
+                $"[ZoneMonitorDataManager] 工区映射完成：企业:{ResolveEnterpriseId()} 车间:{companyIndex} 工区ID:{currentWorkAreaId}");
+            StartMonitor();
         }
 
-        Debug.LogWarning($"[ZoneMonitorDataManager] 准备启动监控轮询 -> 最终参数将会是: {companyIndex}-2-{currentWorkAreaId}");
-        StartMonitor();
-    }
-
-    public void StartMonitor()
+        public void StartMonitor()
         {
             isPollingActive = true;
-            if (pollingCoroutine != null) StopCoroutine(pollingCoroutine);
-            pollingCoroutine = StartCoroutine(PollDataRoutine());
+            requestGeneration++;
+
+            if (pollingCoroutine != null)
+                StopCoroutine(pollingCoroutine);
+
+            pollingCoroutine = StartCoroutine(PollDataRoutine(requestGeneration));
         }
 
         public void StopPolling()
         {
             isPollingActive = false;
-            if (pollingCoroutine != null) StopCoroutine(pollingCoroutine);
+            requestGeneration++;
+
+            if (pollingCoroutine != null)
+            {
+                StopCoroutine(pollingCoroutine);
+                pollingCoroutine = null;
+            }
         }
 
         private void FetchDataImmediately()
         {
             if (!isPollingActive) return;
-            StartCoroutine(RequestData(currentWorkAreaId));
+            StartCoroutine(RequestData(currentWorkAreaId, requestGeneration));
         }
 
-        private IEnumerator PollDataRoutine()
+        private IEnumerator PollDataRoutine(int generation)
         {
-            while (true)
+            while (isPollingActive && generation == requestGeneration)
             {
-                yield return StartCoroutine(RequestData(currentWorkAreaId));
+                yield return StartCoroutine(RequestData(currentWorkAreaId, generation));
                 yield return new WaitForSeconds(pollInterval);
             }
         }
 
-        private string lastResponseText = null;
-        private string lastTestParam = null;
-
-        private IEnumerator RequestData(string areaId)
+        private IEnumerator RequestData(string areaId, int generation)
         {
-            // 构造类似 1-2-1 的请求体 (其中 2 表示 "分区监控实时信息")
-            string testParam = companyIndex + "-2-" + areaId;
+            string enterpriseId = ResolveEnterpriseId();
+            string testParam = enterpriseId + "-" + SectionMonitorFrameType + "-" + areaId;
             string jsonData = "\"" + testParam + "\"";
             byte[] byteArray = System.Text.Encoding.UTF8.GetBytes(jsonData);
 
-            // 无论响应是否相同，每次发起请求前都强制打印一遍日志
             Debug.LogWarning($"[ZoneMonitorDataManager] 开始请求 API，参数: {testParam}, URL: {apiUrl}");
             
             using (UnityWebRequest request = new UnityWebRequest(apiUrl, "POST"))
@@ -218,8 +253,16 @@ namespace ZoneMonitor
                 request.uploadHandler = new UnityEngine.Networking.UploadHandlerRaw(byteArray);
                 request.downloadHandler = new UnityEngine.Networking.DownloadHandlerBuffer();
                 request.SetRequestHeader("Content-Type", "application/json");
+                request.timeout = 15;
 
                 yield return request.SendWebRequest();
+
+                // 切换工区后，旧请求即使晚返回也不能覆盖新工区的数据。
+                if (generation != requestGeneration || areaId != currentWorkAreaId)
+                {
+                    Debug.Log($"[ZoneMonitorDataManager] 忽略过期响应: {testParam}");
+                    yield break;
+                }
 
                 if (request.result == UnityWebRequest.Result.Success)
                 {
@@ -241,67 +284,231 @@ namespace ZoneMonitor
                         Debug.LogWarning("[ZoneMonitorDataManager] 返回内容为空！");
                     }
                     
-                    // 清理上一次的数据，准备解析新数据（即使是空也先清空）
-                    currentDataList.Clear();
-
-                    if (!string.IsNullOrEmpty(responseText) && responseText.Length > 2 && responseText.StartsWith("\"") && responseText != "\"\"")
+                    byte[] decodedBytes;
+                    if (!TryDecodeResponse(responseText, out decodedBytes))
                     {
-                        // 去掉前后的引号
-                        string base64Str = responseText.Substring(1, responseText.Length - 2);
-                        // 处理可能的填充
-                        int paddingCount = base64Str.Length % 4;
-                        if (paddingCount > 0)
-                        {
-                            base64Str += new string('=', 4 - paddingCount);
-                        }
+                        HandleUnavailableData($"接口未返回可解析的 Frame 2 数据，参数: {testParam}");
+                        yield break;
+                    }
 
-                        if (base64Str.Length > 0)
-                        {
-                            try
-                            {
-                                byte[] bytes = System.Convert.FromBase64String(base64Str);
-                                Debug.LogWarning($"[ZoneMonitorDataManager] Base64解码成功，解码后字节数: {bytes.Length}");
-                                ParseRawData(bytes);
-                                // 解析出真实数据时，正常回调填充表格
-                                OnDataUpdated?.Invoke(currentDataList);
-                            }
-                            catch (System.Exception ex)
-                            {
-                                Debug.LogError($"[ZoneMonitorDataManager] Base64 解析失败: {ex.Message}");
-                                InjectFakeData(); // 解析失败使用模拟数据填充
-                            }
-                        }
-                        else
-                        {
-                            Debug.LogWarning("[ZoneMonitorDataManager] Base64字符串为空，未能提取出有效数据。");
-                            InjectFakeData();  // 解析为空使用模拟数据填充
-                        }
-                    }
-                    else
+                    Debug.LogWarning($"[ZoneMonitorDataManager] Base64解码成功，解码后字节数: {decodedBytes.Length}");
+                    List<ZoneMonitorRealtimeData> parsedRows;
+                    if (!TryParseSectionMonitorData(decodedBytes, out parsedRows))
                     {
-                        Debug.LogWarning($"[ZoneMonitorDataManager] 接口返回为空或者不是正确格式。开始填充随机数据...");
-                        InjectFakeData(); // 如果返回空（如 "" ），使用随机数据填充表格
+                        HandleUnavailableData($"Frame 2 数据格式无效，参数: {testParam}");
+                        yield break;
                     }
+
+                    PublishRows(parsedRows);
                 }
                 else
                 {
                     Debug.LogError($"[ZoneMonitorDataManager] API Request Error - HTTP状态码: {request.responseCode}");
                     Debug.LogError($"[ZoneMonitorDataManager] 错误信息: {request.error}");
-                    InjectFakeData(); // 网络错误使用随机数据填充表格
+                    HandleUnavailableData($"接口请求失败: {request.error}");
                 }
             }
+        }
+
+        private string ResolveEnterpriseId()
+        {
+            return !string.IsNullOrWhiteSpace(GlobalUserData.AlSerialPantId)
+                ? GlobalUserData.AlSerialPantId.Trim()
+                : defaultEnterpriseId;
+        }
+
+        private static WorkAreaData FindWorkArea(string selectedName)
+        {
+            if (GlobalUserData.WorkAreaList == null)
+                return null;
+
+            foreach (WorkAreaData area in GlobalUserData.WorkAreaList)
+            {
+                if (area != null && string.Equals(area.WorkAreaName, selectedName, StringComparison.OrdinalIgnoreCase))
+                    return area;
+            }
+
+            return null;
+        }
+
+        private static int ExtractLocalWorkAreaNumber(string workAreaName, string fallbackId)
+        {
+            if (!string.IsNullOrWhiteSpace(workAreaName))
+            {
+                var match = System.Text.RegularExpressions.Regex.Match(workAreaName, @"(\d+)\s*工区");
+                if (match.Success && int.TryParse(match.Groups[1].Value, out int localAreaNumber))
+                    return localAreaNumber;
+            }
+
+            return int.TryParse(fallbackId, out int fallbackAreaNumber) ? fallbackAreaNumber : 1;
+        }
+
+        private static bool TryDecodeResponse(string responseText, out byte[] bytes)
+        {
+            bytes = null;
+            if (string.IsNullOrWhiteSpace(responseText))
+                return false;
+
+            string base64Text = responseText.Trim();
+            if (base64Text == "\"\"")
+                return false;
+
+            if (base64Text.StartsWith("\"") && base64Text.EndsWith("\"") && base64Text.Length >= 2)
+                base64Text = base64Text.Substring(1, base64Text.Length - 2);
+
+            if (string.IsNullOrWhiteSpace(base64Text))
+                return false;
+
+            int remainder = base64Text.Length % 4;
+            if (remainder != 0)
+                base64Text += new string('=', 4 - remainder);
+
+            try
+            {
+                bytes = Convert.FromBase64String(base64Text);
+                return bytes.Length > 0;
+            }
+            catch (FormatException ex)
+            {
+                Debug.LogError($"[ZoneMonitorDataManager] Base64解析失败: {ex.Message}");
+                return false;
+            }
+        }
+
+        private static bool TryParseSectionMonitorData(byte[] bytes, out List<ZoneMonitorRealtimeData> rows)
+        {
+            rows = new List<ZoneMonitorRealtimeData>();
+            if (bytes == null || bytes.Length == 0)
+                return false;
+
+            // Alwit 正常响应包含 AA55 帧头、12字节头部和 A55A 帧尾。
+            if (bytes.Length >= 14 && bytes[0] == 0xAA && bytes[1] == 0x55)
+                return TryParseFramedData(bytes, rows);
+
+            // 兼容旧服务可能直接返回纯数据区的情况。
+            ParseRecordRange(bytes, 0, bytes.Length, rows);
+            return rows.Count > 0;
+        }
+
+        private static bool TryParseFramedData(byte[] bytes, List<ZoneMonitorRealtimeData> rows)
+        {
+            int offset = 0;
+            bool foundSectionFrame = false;
+
+            while (offset + 14 <= bytes.Length)
+            {
+                if (bytes[offset] != 0xAA || bytes[offset + 1] != 0x55)
+                {
+                    offset++;
+                    continue;
+                }
+
+                int frameStart = offset;
+                int enterpriseId = ReadUInt16BigEndian(bytes, offset + 2);
+                int frameType = ReadUInt16BigEndian(bytes, offset + 4);
+                int areaOrSlotId = ReadUInt16BigEndian(bytes, offset + 6);
+                int dataLength = ReadInt32BigEndian(bytes, offset + 8);
+                int dataStart = offset + 12;
+                int dataEnd = dataStart + dataLength;
+
+                if (dataLength < 0 || dataEnd + 2 > bytes.Length)
+                {
+                    Debug.LogError(
+                        $"[ZoneMonitorDataManager] Frame 2长度无效: enterprise={enterpriseId}, " +
+                        $"area={areaOrSlotId}, dataLength={dataLength}, total={bytes.Length}");
+                    return false;
+                }
+
+                bool tailValid = bytes[dataEnd] == 0xA5 && bytes[dataEnd + 1] == 0x5A;
+                if (!tailValid)
+                {
+                    Debug.LogError($"[ZoneMonitorDataManager] 帧尾无效，frameStart={frameStart}");
+                    return false;
+                }
+
+                if (frameType == SectionMonitorFrameType)
+                {
+                    foundSectionFrame = true;
+                    ParseRecordRange(bytes, dataStart, dataLength, rows);
+                }
+
+                offset = dataEnd + 2;
+            }
+
+            return foundSectionFrame && rows.Count > 0;
+        }
+
+        private static void ParseRecordRange(
+            byte[] bytes,
+            int startIndex,
+            int length,
+            List<ZoneMonitorRealtimeData> rows)
+        {
+            int recordCount = length / SectionMonitorRecordSize;
+            int remainder = length % SectionMonitorRecordSize;
+            if (remainder != 0)
+            {
+                Debug.LogWarning(
+                    $"[ZoneMonitorDataManager] Frame 2数据区长度 {length} 不是 {SectionMonitorRecordSize} 的整数倍，" +
+                    $"末尾 {remainder} 字节将忽略。");
+            }
+
+            for (int i = 0; i < recordCount; i++)
+            {
+                ZoneMonitorRealtimeData row = ZoneMonitorRealtimeData.Parse(
+                    bytes,
+                    startIndex + i * SectionMonitorRecordSize);
+                if (row != null)
+                    rows.Add(row);
+            }
+        }
+
+        private static int ReadUInt16BigEndian(byte[] bytes, int offset)
+        {
+            return (bytes[offset] << 8) | bytes[offset + 1];
+        }
+
+        private static int ReadInt32BigEndian(byte[] bytes, int offset)
+        {
+            return (bytes[offset] << 24) |
+                   (bytes[offset + 1] << 16) |
+                   (bytes[offset + 2] << 8) |
+                   bytes[offset + 3];
+        }
+
+        private void PublishRows(List<ZoneMonitorRealtimeData> rows)
+        {
+            currentDataList.Clear();
+            if (rows != null)
+                currentDataList.AddRange(rows);
+
+            Debug.Log($"[ZoneMonitorDataManager] 分区监控数据更新: {currentDataList.Count} 条");
+            OnDataUpdated?.Invoke(currentDataList);
+        }
+
+        private void HandleUnavailableData(string reason)
+        {
+            Debug.LogWarning($"[ZoneMonitorDataManager] {reason}");
+            if (useMockDataWhenUnavailable)
+            {
+                InjectFakeData();
+                return;
+            }
+
+            currentDataList.Clear();
+            OnDataUpdated?.Invoke(currentDataList);
         }
 
         // ---------- 用来塞入假数据让页面能显示东西的函数 ----------
         private void InjectFakeData()
         {
             currentDataList.Clear();
-            int baseSlotId = 2001; // 假装从 2001 槽开始
+            List<ushort> mockSlots = ResolveMockSlotNumbers();
 
-            for (int i = 0; i < 10; i++) // 生成 10 条伪造数据
+            for (int i = 0; i < mockSlots.Count; i++)
             {
                 ZoneMonitorRealtimeData fakeItem = new ZoneMonitorRealtimeData();
-                fakeItem.SlotId = baseSlotId + i;
+                fakeItem.SlotId = mockSlots[i];
                 fakeItem.SlotVoltage = 3981 + UnityEngine.Random.Range(-5, 5); // 毫伏级微小波动
                 fakeItem.NeedleVibration = UnityEngine.Random.Range(1, 16); 
                 fakeItem.Swing = UnityEngine.Random.Range(1, 3);
@@ -328,31 +535,41 @@ namespace ZoneMonitor
             OnDataUpdated?.Invoke(currentDataList);
         }
 
-        private void ParseRawData(byte[] bytes)
+        private List<ushort> ResolveMockSlotNumbers()
         {
-            if (bytes == null || bytes.Length == 0) return;
-
-            currentDataList.Clear();
-            int totalRecords = bytes.Length / 41;
-            
-            if (totalRecords > 0)
+            List<ushort> slots = new List<ushort>();
+            if (byte.TryParse(companyIndex, out byte workshopNumber) &&
+                currentLocalWorkAreaNumber > 0 && currentLocalWorkAreaNumber <= byte.MaxValue &&
+                GlobalElectrolyticCellDataManager.Instance != null &&
+                GlobalElectrolyticCellDataManager.Instance.isDataLoaded)
             {
-                Debug.LogWarning($"[ZoneMonitorDataManager] 开始按照41字节切分数据。总字节数: {bytes.Length}, 将解析为 {totalRecords} 条槽记录。");
+                List<ushort> configuredSlots =
+                    GlobalElectrolyticCellDataManager.Instance.GetSlotNumbersByWorkshopAndArea(
+                        workshopNumber,
+                        (byte)currentLocalWorkAreaNumber);
+
+                int configuredCount = Mathf.Min(10, configuredSlots.Count);
+                for (int i = 0; i < configuredCount; i++)
+                    slots.Add(configuredSlots[i]);
             }
 
-            for (int i = 0; i < totalRecords; i++)
-            {
-                var data = ZoneMonitorRealtimeData.Parse(bytes, i * 41);
-                if (data != null)
-                {
-                    currentDataList.Add(data);
-                }
-            }
+            if (slots.Count > 0)
+                return slots;
 
-            Debug.Log($"[ZoneMonitorDataManager] 数据解析完成。一共存入了 {currentDataList.Count} 条记录，即将下发给 UI 更新。");
+            int workshop = int.TryParse(companyIndex, out int parsedWorkshop) ? parsedWorkshop : 1;
+            int area = Mathf.Max(1, currentLocalWorkAreaNumber);
+            int baseSlotId = workshop * 1000 + 1 + (area - 1) * 55;
+            for (int i = 0; i < 10; i++)
+                slots.Add((ushort)(baseSlotId + i));
 
-            // 触发UI更新通知
-            OnDataUpdated?.Invoke(currentDataList);
+            return slots;
+        }
+
+        private void OnDestroy()
+        {
+            StopPolling();
+            if (Instance == this)
+                Instance = null;
         }
     }
 }

@@ -31,9 +31,15 @@ namespace XCharts.UI.Demo
 
         private SlotNumberSelector slotNumberSelector;
         private WorkAreaSelector workAreaSelector;
+        private bool isQueryCoordinator;
 
         void Awake()
         {
+            // 场景中的每张表都挂有本组件，但只有 tongjiManager 同时挂有
+            // StatisticsReportManager。筛选事件和自动查询只能由它统一处理，
+            // 避免一次选择被多张表重复订阅并触发多组相同请求。
+            isQueryCoordinator = GetComponent<StatisticsReportManager>() != null;
+
             // 获取UITable组件
             if (m_Table == null)
             {
@@ -57,7 +63,7 @@ namespace XCharts.UI.Demo
             }
 
             // 监听日期确认事件
-            if (dateSelector != null)
+            if (isQueryCoordinator && dateSelector != null)
             {
                 dateSelector.OnDateConfirmed.AddListener(OnDateSelected);
             }
@@ -83,7 +89,7 @@ namespace XCharts.UI.Demo
             }
             
             // 监听槽号确认事件
-            if (slotNumberSelector != null)
+            if (isQueryCoordinator && slotNumberSelector != null)
             {
                 slotNumberSelector.OnSlotConfirmed.AddListener(OnSlotSelected);
                 Debug.Log("✓ 已监听槽号选择事件");
@@ -109,7 +115,7 @@ namespace XCharts.UI.Demo
             }
             
             // 监听车间工区选择事件
-            if (workAreaSelector != null)
+            if (isQueryCoordinator && workAreaSelector != null)
             {
                 workAreaSelector.OnWorkAreaConfirmedEvent.AddListener(OnWorkAreaSelected);
                 Debug.Log("✓ 已监听车间工区选择事件");
@@ -131,6 +137,12 @@ namespace XCharts.UI.Demo
         {
             // 初始化表格样式
             InitializeTableStyle();
+
+            // 其他 StatisticsReportTable 实例只负责各自表格的样式。
+            if (!isQueryCoordinator)
+            {
+                return;
+            }
             
             // 延迟设置默认值，确保选择器的Start已执行
             Invoke(nameof(SetDefaultValuesToSelectors), 0.5f);
@@ -206,9 +218,6 @@ namespace XCharts.UI.Demo
                 queryDate, 
                 queryDate  // 起始和终止日期相同
             );
-            
-            // 延迟填充数据（等待API返回）
-            Invoke(nameof(FillVoltageTable), 5f);
         }
         
         /// <summary>
@@ -312,8 +321,7 @@ namespace XCharts.UI.Demo
                 // 设置5列表头
                 m_Table.SetColumns(new System.Collections.Generic.List<string> { "槽号", "槽状态", "设定电压", "平均电压", "工作电压" });
                 
-                // 刷新表格
-                m_Table.RefreshGraph();
+                // RefreshTable 内部已会调用 RefreshGraph，只刷新一次即可。
                 m_Table.RefreshTable();
                 
                 Debug.Log("✓ 统计报表表格列数设置完成：5列");

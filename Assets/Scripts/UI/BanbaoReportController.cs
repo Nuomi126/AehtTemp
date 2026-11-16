@@ -591,32 +591,80 @@ public class BanbaoReportController : MonoBehaviour
 
     private static ReportData[] BuildMockRows(string workArea, string shift, string date)
     {
+        int baseSlot = ResolveMockBaseSlot(workArea);
+        int shiftOffset = ResolveMockShiftOffset(shift);
+        int dataVariant = StableTextSeed(workArea + shift + date) % 9;
         ReportData[] rows = new ReportData[12];
         for (int i = 0; i < rows.Length; i++)
         {
             rows[i] = new ReportData
             {
                 dayId = i + 1,
-                caoh = 2031 + i,
-                caokCaozht = i % 4,
-                sheddy = 3970 + i,
-                pingjdy = 3984 + i,
-                gongzdy = 3981 + i,
-                xiaoyXiaoycsh = i % 3,
-                xiaoyShanshxycsh = i % 2,
-                xiaoyChixshj = 120 + i * 10,
-                xiaoyPingjdy = 4050 + i,
-                xiaoyGongh = 30 + i,
+                caoh = baseSlot + shiftOffset + i,
+                caokCaozht = (i + dataVariant) % 4,
+                sheddy = 3970 + i + dataVariant,
+                pingjdy = 3984 + i + dataVariant,
+                gongzdy = 3981 + i + dataVariant,
+                xiaoyXiaoycsh = (i + dataVariant) % 3,
+                xiaoyShanshxycsh = (i + dataVariant) % 2,
+                xiaoyChixshj = 120 + i * 10 + dataVariant,
+                xiaoyPingjdy = 4050 + i + dataVariant,
+                xiaoyGongh = 30 + i + dataVariant,
                 xialXialjg = 90,
-                xialZongcsh = 40 + i,
-                xialQianlcsh = i % 5,
-                xialGuolcsh = i % 4,
-                xialXialzl = 120 + i
+                xialZongcsh = 40 + i + dataVariant,
+                xialQianlcsh = (i + dataVariant) % 5,
+                xialGuolcsh = (i + dataVariant) % 4,
+                xialXialzl = 120 + i + dataVariant
             };
         }
 
         Debug.Log($"[BanbaoReport] Mock data: gongqu={workArea}, banci={shift}, date={date}, rows={rows.Length}");
         return rows;
+    }
+
+    private static int ResolveMockBaseSlot(string workArea)
+    {
+        int workshop = 1;
+        int area = 1;
+        var matches = System.Text.RegularExpressions.Regex.Matches(workArea ?? string.Empty, @"\d+");
+
+        if (matches.Count >= 2)
+        {
+            int.TryParse(matches[0].Value, out workshop);
+            int.TryParse(matches[1].Value, out area);
+        }
+        else if (matches.Count == 1)
+        {
+            int value;
+            if (int.TryParse(matches[0].Value, out value))
+            {
+                if (!string.IsNullOrEmpty(workArea) && workArea.Contains("车间"))
+                    workshop = value;
+                else
+                    area = value;
+            }
+        }
+
+        workshop = Mathf.Max(1, workshop);
+        area = Mathf.Clamp(area, 1, 3);
+        return workshop * 1000 + 1 + (area - 1) * 55;
+    }
+
+    private static int ResolveMockShiftOffset(string shift)
+    {
+        if (string.IsNullOrEmpty(shift)) return 0;
+        if (shift.Contains("中")) return 12;
+        if (shift.Contains("晚") || shift.Contains("夜")) return 24;
+        return 0;
+    }
+
+    private static int StableTextSeed(string value)
+    {
+        int seed = 0;
+        if (string.IsNullOrEmpty(value)) return seed;
+        for (int i = 0; i < value.Length; i++)
+            seed = (seed * 31 + value[i]) & 0x7fffffff;
+        return seed;
     }
 
     private static string Normalize(string value)

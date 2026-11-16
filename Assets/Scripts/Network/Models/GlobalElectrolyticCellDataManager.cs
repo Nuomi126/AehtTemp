@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using UnityEngine;
+using UnityEngine.SceneManagement;
 
 public class GlobalElectrolyticCellDataManager : MonoBehaviour
 {
@@ -74,7 +75,11 @@ public class GlobalElectrolyticCellDataManager : MonoBehaviour
         // 尝试自动刷新SlotNumberSelector的默认值
         try
         {
-            var selector = FindObjectOfType<SlotNumberSelector>();
+            Scene activeScene = SceneManager.GetActiveScene();
+            var selector = FindObjectsOfType<SlotNumberSelector>(true)
+                .FirstOrDefault(candidate => candidate != null
+                    && candidate.gameObject.scene == activeScene
+                    && candidate.itemScrollRect != null);
             if (selector != null)
             {
                 Debug.Log("[GlobalElectrolyticCellDataManager] 数据加载完成，自动刷新槽号选择器默认值");
