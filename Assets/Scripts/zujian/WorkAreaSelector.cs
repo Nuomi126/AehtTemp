@@ -117,6 +117,27 @@ public class WorkAreaSelector : MonoBehaviour
 	    // 输出执行时间（毫秒）
 	    UnityEngine.Debug.Log($"WorkAreaSelector OpenSelectorPanel()执行时间: {stopwatch.Elapsed.TotalSeconds} 秒");
     }
+
+    /// <summary>
+    /// 打开选择器前同步顶部当前工区，确保列表红色选中项与主界面一致。
+    /// </summary>
+    public string PrepareSelection(string preferredWorkArea)
+    {
+        if (workAreaItems.Count == 0)
+            LoadWorkAreaDataFromGlobal();
+
+        if (!string.IsNullOrWhiteSpace(preferredWorkArea) && workAreaItems.Contains(preferredWorkArea))
+            selectedWorkArea = preferredWorkArea;
+        else if (string.IsNullOrWhiteSpace(selectedWorkArea) || !workAreaItems.Contains(selectedWorkArea))
+            selectedWorkArea = workAreaItems.Count > 0 ? workAreaItems[0] : string.Empty;
+
+        if (itemScrollRect != null)
+            PopulateScrollRect(itemScrollRect, workAreaItems);
+
+        isPanelInitialized = itemScrollRect != null;
+        isDataLoaded = workAreaItems.Count > 0;
+        return selectedWorkArea;
+    }
     
     // 修改数据加载方法，移除协程
     private void LoadWorkAreaDataFromGlobal()
@@ -291,13 +312,13 @@ public class WorkAreaSelector : MonoBehaviour
         // 这里可以添加一个预览文本组件，如果需要的话
     }
 
-    void CancelSelection()
+    public void CancelSelection()
     {
         selectorPanel.SetActive(false); // 隐藏选择面板
 		UnityEngine.Debug.Log("取消工区选择");
     }
 
-    void ConfirmSelection()
+    public void ConfirmSelection()
     {
         // 只有在确认时才更新主UI上的显示文本
         if (selectedDisplayText != null)

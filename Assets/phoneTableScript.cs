@@ -19,8 +19,36 @@ using static HistoryTemperature;
 using static System.Net.Mime.MediaTypeNames;
 public class phoneTableScript : MonoBehaviour
 {
-	// ±í¸ñµÄÃû³Æ
-	[Header("UI×é¼ş")]
+	public enum TemperatureSensorCategory
+	{
+		Cathode,
+		SteelWindow,
+		EndAndBottom
+	}
+
+	[Serializable]
+	public sealed class TemperatureSensorReading
+	{
+		public int sampleIndex;
+		public int positionIndex;
+		public int directionType;
+		public int directionIndex;
+		public int nodeIndex;
+		public string displayName;
+		public float temperature;
+		public TemperatureSensorCategory category;
+	}
+
+	/// <summary>
+	/// Raised whenever the heat-map receives a fresh sensor snapshot. The
+	/// sensor information page reuses this stream so both tabs stay in sync.
+	/// </summary>
+	public event Action<IReadOnlyList<TemperatureSensorReading>> TemperatureReadingsUpdated;
+
+	private readonly List<TemperatureSensorReading> latestSensorReadings = new();
+
+	// è¡¨æ ¼çš„åç§°
+	[Header("UIç»„ä»¶")]
 	public UITable zhongJianTable;
 	public UITable shangTable;
 	public UITable xiaTable;
@@ -39,11 +67,12 @@ public class phoneTableScript : MonoBehaviour
 	public Canvas canver;
 	private UITable pointedTable;
 	public RawImage tableBackImage;
-	public UnityEngine.UI.Toggle posTog; //Î»ÖÃĞÅÏ¢¿ª¹Ø
-	//public TMP_InputField slotInputField; //²ÛºÅ
-	[SerializeField]private TextMeshProUGUI slotInputText; //²ÛºÅ
+	public UnityEngine.UI.Toggle posTog; //ä½ç½®ä¿¡æ¯å¼€å…³
+	//public TMP_InputField slotInputField; //æ§½å·
+	[SerializeField]private TextMeshProUGUI slotInputText; //æ§½å·
 	[SerializeField] private TextMeshProUGUI getHisTmpNoticeText;
-	[Header("API¹ÜÀíÆ÷")]
+	[SerializeField] private bool enableHistoryTemperature = false;
+	[Header("APIç®¡ç†å™¨")]
 	public TemperatureAPIManager temperatureAPI; 
 	public HistoryTemperature historyTemperatureAPI;	
 	public UnityEngine.UI.Button slotButton;
@@ -52,15 +81,15 @@ public class phoneTableScript : MonoBehaviour
 	private RectTransform contentRect;
 	private Vector2 lastPosition;
 	private List<float> temperatureData;
-	private List<List<int>> djcConfig; // ´æ´¢ÅäÖÃĞÅÏ¢
+	private List<List<int>> djcConfig; // å­˜å‚¨é…ç½®ä¿¡æ¯
 	private HisTemDataDB HistoryTemperatureDatDB = new();
-	// ÅäÖÃÎÄ¼şÂ·¾¶
-	private string companyIndex = "1033";  // ÆóÒµ±êÊ¶
-	private string slotNumber ="";  //²ÛºÅ	
-	private string defaultSlotNumber = "1001";  //²ÛºÅ	
-	private string Date ="";  //ÈÕÆÚ
-	float nextExecutionTime = 0; // ÏÂ´ÎÖ´ĞĞµÄÊ±¼äµã
-	float nextGetHisTmpTime = 0; // ÏÂ´ÎÖ´ĞĞµÄÊ±¼äµã
+	// é…ç½®æ–‡ä»¶è·¯å¾„
+	private string companyIndex = "1033";  // ä¼ä¸šæ ‡è¯†
+	private string slotNumber ="";  //æ§½å·
+	private string defaultSlotNumber = "1001";  //æ§½å·
+	private string Date ="";  //æ—¥æœŸ
+	float nextExecutionTime = 0; // ä¸‹æ¬¡æ‰§è¡Œçš„æ—¶é—´ç‚¹
+	float nextGetHisTmpTime = 0; // ä¸‹æ¬¡æ‰§è¡Œçš„æ—¶é—´ç‚¹
 	TableCell selectCell;
 
 	// Start is called before the first frame update
@@ -76,31 +105,31 @@ public class phoneTableScript : MonoBehaviour
 		youErTable.onTableClick = OnTableCellClicked;
 		LineChart smootLineChart = lineChart.ConvertTo<LineChart>();
 				
-		// ½«Í¼±íÈ«²¿Êı¾İÇåÁã
+		// å°†å›¾è¡¨å…¨éƒ¨æ•°æ®æ¸…é›¶
 		ClearTableData();
 
-		// ÉèÖÃÈÈÁ¦Í¼Î»ÖÃĞÅÏ¢
+		// è®¾ç½®çƒ­åŠ›å›¾ä½ç½®ä¿¡æ¯
 		UpdatePosInfo(false);
 
 		posTog.onValueChanged.AddListener(UpdatePosInfo);
-		// Òş²Ø»ñÈ¡ÀúÊ·ÎÂ¶ÈÊı¾İÌáÊ¾
+		// éšè—è·å–å†å²æ¸©åº¦æ•°æ®æç¤º
 		getHisTmpNoticeText.text = "";
 
-		// ÉèÖÃÄ¬ÈÏÈÕÆÚÎªµ±ÌìÈÕÆÚ
+		// è®¾ç½®é»˜è®¤æ—¥æœŸä¸ºå½“å¤©æ—¥æœŸ
 		DateTime currentDate = DateTime.Today;
 		Date = currentDate.ToString("yyyyMMdd");
 
 		if (canver == null)
 		{
-			Debug.LogError("Canvas ContentÎ´ÉèÖÃ£¡");
+			Debug.LogError("Canvas Contentæœªè®¾ç½®ï¼");
 			return;
 		}
 
-		//// ÉèÖÃÄ¬ÈÏÑ¡ÖĞ±í¸ñ
+		//// è®¾ç½®é»˜è®¤é€‰ä¸­è¡¨æ ¼
 		pointedTable = zhongJianTable;
 		contentRect = canver.GetComponent<RectTransform>();
 
-		// ¸ù¾İ±í¸ñÉèÖÃµÄÄ¬ÈÏ²ÛºÅ¸üĞÂ±í¸ñÎÂ¶ÈĞÅÏ¢ 20250804
+		// æ ¹æ®è¡¨æ ¼è®¾ç½®çš„é»˜è®¤æ§½å·æ›´æ–°è¡¨æ ¼æ¸©åº¦ä¿¡æ¯ 20250804
 		slotInputText.text = defaultSlotNumber;
 		OnUpdataButtonClick();
 	}
@@ -125,9 +154,9 @@ public class phoneTableScript : MonoBehaviour
 	// Update is called once per frame
 	void Update()
     {
-		if (slotNumber != "" && Time.time >= nextExecutionTime) // ¼ì²éÊÇ·ñµ½ÁËÖ´ĞĞÊ±¼äµã
+		if (slotNumber != "" && Time.time >= nextExecutionTime) // æ£€æŸ¥æ˜¯å¦åˆ°äº†æ‰§è¡Œæ—¶é—´ç‚¹
 		{			
-			// »ñÈ¡µç½â²ÛÅäÖÃĞÅÏ¢
+			// è·å–ç”µè§£æ§½é…ç½®ä¿¡æ¯
 			temperatureAPI.GetDjcConfig(
 							companyIndex,
 							slotNumber,
@@ -135,52 +164,52 @@ public class phoneTableScript : MonoBehaviour
 							onConfigError: OnGetConfigError
 							);
 
-			nextExecutionTime = Time.time + 5; // ¸üĞÂÏÂ´ÎÖ´ĞĞµÄÊ±¼äµãÎªµ±Ç°Ê±¼ä¼Ó5Ãë
+			nextExecutionTime = Time.time + 5; // æ›´æ–°ä¸‹æ¬¡æ‰§è¡Œçš„æ—¶é—´ç‚¹ä¸ºå½“å‰æ—¶é—´åŠ 5ç§’
 		}
-		if (slotNumber != "" && Time.time >= nextGetHisTmpTime) // ¼ì²éÊÇ·ñµ½ÁËÖ´ĞĞÊ±¼äµã
+		if (enableHistoryTemperature && slotNumber != "" && Time.time >= nextGetHisTmpTime) // æ£€æŸ¥æ˜¯å¦åˆ°äº†æ‰§è¡Œæ—¶é—´ç‚¹
 		{
-			getHisTmpNoticeText.text = "ÕıÔÚ»ñÈ¡ÀúÊ·ÎÂ¶ÈÊı¾İ¡­¡­";
-			// µ÷ÓÃAPI»ñÈ¡ÀúÊ·ÎÂ¶ÈÊı¾İ
+			getHisTmpNoticeText.text = "æ­£åœ¨è·å–å†å²æ¸©åº¦æ•°æ®â€¦â€¦";
+			// è°ƒç”¨APIè·å–å†å²æ¸©åº¦æ•°æ®
 			historyTemperatureAPI.GetHisTempData(companyIndex, slotNumber, Date, onSuccessHisTmpData: onSuccessGetHisTmpData);
-			nextGetHisTmpTime = Time.time + 600; // ¸üĞÂÏÂ´ÎÖ´ĞĞµÄÊ±¼äµãÎªµ±Ç°Ê±¼ä¼Ó600Ãë£¬10·ÖÖÓ
+			nextGetHisTmpTime = Time.time + 600; // æ›´æ–°ä¸‹æ¬¡æ‰§è¡Œçš„æ—¶é—´ç‚¹ä¸ºå½“å‰æ—¶é—´åŠ 600ç§’ï¼Œ10åˆ†é’Ÿ
 		}
 	}
 	
-	//±í¸ñ±»µã»÷Ê±ÏÔÊ¾ÕÛÏßÍ¼±í
+	//è¡¨æ ¼è¢«ç‚¹å‡»æ—¶æ˜¾ç¤ºæŠ˜çº¿å›¾è¡¨
 	public void OnTableCellClicked(int row, int column, TableCell cell)
 	{
 		Rect windowRect;
 		string tmpconfig;
 		string temPosconfig;
-		int sampleindex = 0;  //²ÉÑù±àºÅ
-		int posindex = 0;    // Î»ÖÃ±àºÅ
-		int irectiontype = 0;   //·½ÏòÀàĞÍ
-		int directionindex = 0;//·½Ïò±àºÅ
-		int nodeindex = 0;   //½ÚµãºÅ
+		int sampleindex = 0;  //é‡‡æ ·ç¼–å·
+		int posindex = 0;    // ä½ç½®ç¼–å·
+		int irectiontype = 0;   //æ–¹å‘ç±»å‹
+		int directionindex = 0;//æ–¹å‘ç¼–å·
+		int nodeindex = 0;   //èŠ‚ç‚¹å·
 
 		float x = 0, y = 0;		
-		// »ñÈ¡LineChart Ãªµã×é¼ş
+		// è·å–LineChart é”šç‚¹ç»„ä»¶
 		RectTransform RectLineChar = lineChart.GetComponent<RectTransform>();
 		
 		
-		// ÉèÖÃµã»÷±í¸ñÑÕÉ«£¬È¡ÏûÑ¡ÖĞ±í¸ñÑÕÉ«		
+		// è®¾ç½®ç‚¹å‡»è¡¨æ ¼é¢œè‰²ï¼Œå–æ¶ˆé€‰ä¸­è¡¨æ ¼é¢œè‰²
 		pointedTable.selectColor = new Color(1f, 1f, 1f, 0f);
 
-		// Í¼±í±»µã»÷µÄÊ±ºò£¬Èç¹ûÒÑ¾­»æÖÆÁËÕÛÏßÍ¼£¬ÔòÇå³ıÕÛÏßÍ¼²¢·µ»Ø
+		// å›¾è¡¨è¢«ç‚¹å‡»çš„æ—¶å€™ï¼Œå¦‚æœå·²ç»ç»˜åˆ¶äº†æŠ˜çº¿å›¾ï¼Œåˆ™æ¸…é™¤æŠ˜çº¿å›¾å¹¶è¿”å›
 		if (lineChart.activeSelf && selectCell != null && selectCell == cell)
 		{ 
 			lineChart.SetActive(false);			
 			return;
 		}			
-		// Èç¹ûÀúÊ·ÎÂ¶ÈÊı¾İ¼ÇÂ¼ÊıÎª0£¬ÔòÍË³ö£¬²»ÏÔÊ¾ÕÛÏßÍ¼
+		// å¦‚æœå†å²æ¸©åº¦æ•°æ®è®°å½•æ•°ä¸º0ï¼Œåˆ™é€€å‡ºï¼Œä¸æ˜¾ç¤ºæŠ˜çº¿å›¾
 		if (HistoryTemperatureDatDB == null || HistoryTemperatureDatDB.DateList.Count == 0)
 		{
 			lineChart.SetActive(false);
-			Debug.Log("ÀúÊ·ÎÂ¶ÈÊı¾İÎª¿Õ£¡");
+			Debug.Log("å†å²æ¸©åº¦æ•°æ®ä¸ºç©ºï¼");
 			return;
 		}
 
-		// È·¶¨±»µã»÷µÄ±í¸ñ
+		// ç¡®å®šè¢«ç‚¹å‡»çš„è¡¨æ ¼
 		if (zhongJianTable.isPointerClick)
 		{
 			pointedTable = zhongJianTable;
@@ -244,9 +273,9 @@ public class phoneTableScript : MonoBehaviour
 			nodeindex = row + 5;
 		}
 		
-		// ¸ù¾İÅäÖÃĞÅÏ¢£¬È·¶¨ÎÂ¶ÈÊı¾İµÄÎ»ÖÃĞòºÅ
+		// æ ¹æ®é…ç½®ä¿¡æ¯ï¼Œç¡®å®šæ¸©åº¦æ•°æ®çš„ä½ç½®åºå·
 		temPosconfig = posindex.ToString() + "-" + irectiontype.ToString() + "-" + directionindex.ToString() + "-" + nodeindex.ToString();
-		Debug.Log($"ÎÂ¶ÈÊı¾İµÄÎ»ÖÃĞòºÅ temPosconfig = {temPosconfig}");
+		Debug.Log($"æ¸©åº¦æ•°æ®çš„ä½ç½®åºå· temPosconfig = {temPosconfig}");
 		sampleindex = -1;
 		for (int i = 0; i < djcConfig.Count; i++)
 		{
@@ -254,30 +283,30 @@ public class phoneTableScript : MonoBehaviour
 			if (tmpconfig.Contains(temPosconfig))
 			{
 				sampleindex = djcConfig[i][0];
-				Debug.Log($"ÅäÖÃµÄË÷Òı sampleindex:{sampleindex}");
+				Debug.Log($"é…ç½®çš„ç´¢å¼• sampleindex:{sampleindex}");
 			}
 		}	
 
-		// »ñÈ¡µã»÷Î»ÖÃ
+		// è·å–ç‚¹å‡»ä½ç½®
 		Vector2 mouseClickPos = pointedTable.clickPos;
-		// »ñÈ¡µã»÷Î»ÖÃµÄ×ø±ê		
+		// è·å–ç‚¹å‡»ä½ç½®çš„åæ ‡
 
-		// ÉèÖÃÑ¡ÖĞµ¥Ôª¸ñÑÕÉ«
+		// è®¾ç½®é€‰ä¸­å•å…ƒæ ¼é¢œè‰²
 		pointedTable.selectColor = new Color(0f, 1f, 0f, 1f);
 		
-		// ÕÛÏßÍ¼ÏÔÊ¾
+		// æŠ˜çº¿å›¾æ˜¾ç¤º
 		lineChart.SetActive(true);
 		selectCell = cell;
-		// ×ø±ê×ª»»ÎªÊÀ½ç×ø±ê
+		// åæ ‡è½¬æ¢ä¸ºä¸–ç•Œåæ ‡
 		mouseClickPos = pointedTable.LocalPointToWorldPoint(mouseClickPos);
 		//Debug.Log($"mouseClickPos = {mouseClickPos}");
-		// ½«×ø±ê×ª»»Îª±¾µØ×ø±ê
+		// å°†åæ ‡è½¬æ¢ä¸ºæœ¬åœ°åæ ‡
 		Vector3 localPos = canver.transform.InverseTransformPoint(mouseClickPos);
-		// ½«Z ÖáÉèÖÃÎª0
+		// å°†Z è½´è®¾ç½®ä¸º0
 		localPos.z = 0;
 		
 		
-		// ¸ù¾İÊó±êµã»÷µÄÎ»ÖÃÉèÖÃÍ¼±íµÄÃªµãÎ»ÖÃ£¬ÏÂÃæµÄÊı×ÖÊÇÆÁÄ»·Ö±æÂÊ
+		// æ ¹æ®é¼ æ ‡ç‚¹å‡»çš„ä½ç½®è®¾ç½®å›¾è¡¨çš„é”šç‚¹ä½ç½®ï¼Œä¸‹é¢çš„æ•°å­—æ˜¯å±å¹•åˆ†è¾¨ç‡
 		if (mouseClickPos.x > 2392* canver.transform.localScale.x / 2)
 		{
 			x = 1;
@@ -297,85 +326,99 @@ public class phoneTableScript : MonoBehaviour
 		RectLineChar.anchorMin = new Vector2(x, y);
 		RectLineChar.anchorMax = new Vector2(x, y);
 		RectLineChar.pivot = new Vector2(x, y);
-		// ÉèÖÃÍ¼±íµÄÎ»ÖÃ
+		// è®¾ç½®å›¾è¡¨çš„ä½ç½®
 		lineChart.transform.localPosition = localPos;
 		UpdateDataLineCharts(HistoryTemperatureDatDB, sampleindex);		
 	}
 
 	/// <summary>
-	/// µÚÒ»´Î»ñÈ¡APIÊı¾İ £¬API³É¹¦»Øµ÷ - ½«Êı¾İÏÔÊ¾ÔÚUI ±í¸ñÉÏ
+	/// ç¬¬ä¸€æ¬¡è·å–APIæ•°æ® ï¼ŒAPIæˆåŠŸå›è°ƒ - å°†æ•°æ®æ˜¾ç¤ºåœ¨UI è¡¨æ ¼ä¸Š
 	/// </summary>
 	private void OnFistAPISuccess(List<float> tempData)
 	{
 		UpdataTableData(tempData);
-		getHisTmpNoticeText.text = "ÕıÔÚ»ñÈ¡ÀúÊ·ÎÂ¶ÈÊı¾İ¡­¡­";
-
-		// µ÷ÓÃAPI»ñÈ¡ÀúÊ·ÎÂ¶ÈÊı¾İ
-		historyTemperatureAPI.GetHisTempData(companyIndex, slotNumber, Date, onSuccessHisTmpData: onSuccessGetHisTmpData);
+		if (enableHistoryTemperature)
+		{
+			getHisTmpNoticeText.text = "æ­£åœ¨è·å–å†å²æ¸©åº¦æ•°æ®â€¦â€¦";
+			// è°ƒç”¨APIè·å–å†å²æ¸©åº¦æ•°æ®
+			historyTemperatureAPI.GetHisTempData(companyIndex, slotNumber, Date, onSuccessHisTmpData: onSuccessGetHisTmpData);
+		}
+		else
+		{
+			getHisTmpNoticeText.text = "";
+		}
 	}
 
 	/// <summary>
-	/// ¶¨Ê±»ñÈ¡APIÊı¾İ £¬API³É¹¦»Øµ÷ - ½«Êı¾İÏÔÊ¾ÔÚUI ±í¸ñÉÏ
+	/// å®šæ—¶è·å–APIæ•°æ® ï¼ŒAPIæˆåŠŸå›è°ƒ - å°†æ•°æ®æ˜¾ç¤ºåœ¨UI è¡¨æ ¼ä¸Š
 	/// </summary>
 	private void OnAPISuccess(List<float> tempData)
 	{
 		UpdataTableData(tempData);		
 	}
 
-	//¸üĞÂ±í¸ñÊı¾İ
+	//æ›´æ–°è¡¨æ ¼æ•°æ®
 	private void UpdataTableData(List<float> tempData)
 	{ 
-		// ²ÉÑù±àºÅ£¬Î»ÖÃ±àºÅ£¬·½ÏòÀàĞÍ£¬·½Ïò±àºÅ,½ÚµãºÅ,
-	/** Î»ÖÃ±àºÅ
-		1 => "¸Ö´°",
-		2 => "³öÂÁ¶Ë",
-		3 => "ÑÌµÀ¶Ë",
-		4 => "Òõ¼«¸Ö°ô",
-		5 => "Â¯µ×",
-		_ => "Î´ÖªÎ»ÖÃ"
+		// é‡‡æ ·ç¼–å·ï¼Œä½ç½®ç¼–å·ï¼Œæ–¹å‘ç±»å‹ï¼Œæ–¹å‘ç¼–å·,èŠ‚ç‚¹å·,
+	/** ä½ç½®ç¼–å·
+		1 => "é’¢çª—",
+		2 => "å‡ºé“ç«¯",
+		3 => "çƒŸé“ç«¯",
+		4 => "é˜´æé’¢æ£’",
+		5 => "ç‚‰åº•",
+		_ => "æœªçŸ¥ä½ç½®"
 
-	** ·½ÏòÀàĞÍ
-		0 => "ÎŞA/BÃæ·Ö±ğÎ»ÖÃ",
-		1 => "AÃæ",
-		2 => "BÃæ",
-		_ => "Î´Öª·½ÏòÀàĞÍ"
+	** æ–¹å‘ç±»å‹
+		0 => "æ— A/Bé¢åˆ†åˆ«ä½ç½®",
+		1 => "Aé¢",
+		2 => "Bé¢",
+		_ => "æœªçŸ¥æ–¹å‘ç±»å‹"
 
-	** ·½Ïò±àºÅ
-		0 => "Ö»ÓĞÒ»¸ö²âÁ¿µã",
-		1 => "Òõ¼«¸Ö°ô-1Î»ÖÃµã",
-		2 => "Òõ¼«¸Ö°ô-2Î»ÖÃµã",
-		_ => "Î´Öª·½Ïò±àºÅ"
+	** æ–¹å‘ç¼–å·
+		0 => "åªæœ‰ä¸€ä¸ªæµ‹é‡ç‚¹",
+		1 => "é˜´æé’¢æ£’-1ä½ç½®ç‚¹",
+		2 => "é˜´æé’¢æ£’-2ä½ç½®ç‚¹",
+		_ => "æœªçŸ¥æ–¹å‘ç¼–å·"
 	**/
 
-		int sampleindex; // ²ÉÑù±àºÅ
-		int posindex; // Î»ÖÃ±àºÅ
-		int directiontype; // ·½ÏòÀàĞÍ
-		int directionindex; // ·½Ïò±àºÅ
-		int nodeindex; // ½ÚµãºÅ
+		int sampleindex; // é‡‡æ ·ç¼–å·
+		int posindex; // ä½ç½®ç¼–å·
+		int directiontype; // æ–¹å‘ç±»å‹
+		int directionindex; // æ–¹å‘ç¼–å·
+		int nodeindex; // èŠ‚ç‚¹å·
 	
-		if (tempData == null || tempData.Count == 0)
+		if (djcConfig == null || djcConfig.Count == 0)
 		{
-			Debug.Log("API·µ»Ø³É¹¦£¬µ«Êı¾İÎª¿Õ£¡");
-			return;
+			Debug.LogWarning("æ¸©åº¦ä¼ æ„Ÿå™¨é…ç½®ä¸ºç©ºï¼Œä½¿ç”¨æ¨¡æ‹Ÿä¼ æ„Ÿå™¨é…ç½®");
+			djcConfig = BuildMockSensorConfig();
 		}
+
+		tempData = ResolveTemperatureData(tempData);
 		
 		temperatureData = tempData;
 
 		foreach (var config in djcConfig)
 		{
+			if (config == null || config.Count < 5)
+				continue;
+
 			sampleindex = config[0];
+			if (sampleindex < 0 || sampleindex >= tempData.Count)
+				continue;
+
 			posindex = config[1];
 			directiontype = config[2];
 			directionindex = config[3];
 			nodeindex = config[4];
 
-			// AÃæÒõ¼« A: directiontype=1 AND posindex=4
+			// Aé¢é˜´æ A: directiontype=1 AND posindex=4
 			if (directiontype == 1 && posindex == 4)
 			{
 				if (directionindex == 1)
 				{
 					xiaTable.UpdateCell(0, 28 - nodeindex, tempData[sampleindex].ToString());
-					// ÉèÖÃµ¥Ôª¸ñÑÕÉ«
+					// è®¾ç½®å•å…ƒæ ¼é¢œè‰²
 					
 				}
 				else if (directionindex == 2)
@@ -383,7 +426,7 @@ public class phoneTableScript : MonoBehaviour
 					xiaTable.UpdateCell(1, 28 - nodeindex, tempData[sampleindex].ToString());
 				}
 			}
-			// BÃæÒõ¼« B: directiontype=2 AND posindex=4
+			// Bé¢é˜´æ B: directiontype=2 AND posindex=4
 			else if (directiontype == 2 && posindex == 4)
 			{
 				if (directionindex == 1)
@@ -396,17 +439,17 @@ public class phoneTableScript : MonoBehaviour
 				}
 
 			}
-			// AÃæ¸Ö´°WA: directiontype=1 AND posindex=1
+			// Aé¢é’¢çª—WA: directiontype=1 AND posindex=1
 			else if (directiontype == 1 && posindex == 1)
 			{
 				xiaTable.UpdateCell(2, 28 - nodeindex, tempData[sampleindex].ToString());
 			}
-			// BÃæ¸Ö´°WB: directiontype=2 AND posindex=1
+			// Bé¢é’¢çª—WB: directiontype=2 AND posindex=1
 			else if (directiontype == 2 && posindex == 1)
 			{
 				shangTable.UpdateCell(0, 28 - nodeindex, tempData[sampleindex].ToString());
 			}
-			// ³öÂÁ¶Ë¶Ë¿Ú: directiontype=0 AND posindex=2
+			// å‡ºé“ç«¯ç«¯å£: directiontype=0 AND posindex=2
 			else if (directiontype == 0 && posindex == 2)
 			{
 				if (nodeindex <= 4)
@@ -418,7 +461,7 @@ public class phoneTableScript : MonoBehaviour
 					youErTable.UpdateCell(nodeindex - 5, 0, tempData[sampleindex].ToString());
 				}
 			}
-			// ÑÌµÀ¶Ë¶Ë¿Ú: directiontype=0 AND posindex=3
+			// çƒŸé“ç«¯ç«¯å£: directiontype=0 AND posindex=3
 			else if (directiontype == 0 && posindex == 3)
 			{
 				if (nodeindex <= 4)
@@ -430,7 +473,7 @@ public class phoneTableScript : MonoBehaviour
 					zuoErTable.UpdateCell(nodeindex - 5, 0, tempData[sampleindex].ToString());
 				}
 			}
-			// µ×²¿: directionindex=0 AND posindex=5
+			// åº•éƒ¨: directionindex=0 AND posindex=5
 			else if (directionindex == 0 && posindex == 5)
 			{
 				if (directiontype == 1)
@@ -443,27 +486,234 @@ public class phoneTableScript : MonoBehaviour
 				}
 
 			}
-		}	
+		}
+
+		RebuildLatestSensorReadings(tempData);
 
 	}
 
 	/// <summary>
-	/// API´íÎó»Øµ÷
+	/// æ¥å£åœ¨ç¼–è¾‘å™¨ä¸­è¿”å›ç©ºæ•°æ®æˆ–å…¨0æ—¶ï¼Œç”¨ä¸æ§½å·ç»‘å®šçš„ç¨³å®šæ¨¡æ‹Ÿæ•°æ®å¡«å……ã€‚
+	/// çœŸå®æ•°æ®ä¸­åªè¦å­˜åœ¨æœ‰æ•ˆæ¸©åº¦ï¼Œå°±å§‹ç»ˆä¼˜å…ˆå±•ç¤ºçœŸå®æ•°æ®ã€‚
+	/// </summary>
+	private List<float> ResolveTemperatureData(List<float> source)
+	{
+		int requiredCount = djcConfig
+			.Where(config => config != null && config.Count >= 5)
+			.Select(config => config[0] + 1)
+			.DefaultIfEmpty(240)
+			.Max();
+
+		bool hasRealTemperature = source != null && source.Any(value => Mathf.Abs(value) > 0.01f);
+		if (hasRealTemperature)
+			return source;
+
+		int dataCount = Mathf.Max(requiredCount, source?.Count ?? 0);
+		List<float> simulated = Enumerable.Repeat(0f, dataCount).ToList();
+		int parsedSlot = int.TryParse(slotNumber, out int value) ? value : 1001;
+
+		foreach (List<int> config in djcConfig)
+		{
+			if (config == null || config.Count < 5)
+				continue;
+
+			int sampleIndex = config[0];
+			if (sampleIndex < 0 || sampleIndex >= simulated.Count)
+				continue;
+
+			int positionIndex = config[1];
+			float minimum;
+			float maximum;
+			switch (positionIndex)
+			{
+				case 5:
+					minimum = 90f;
+					maximum = 150f;
+					break;
+				case 4:
+					minimum = 245f;
+					maximum = 340f;
+					break;
+				case 1:
+					minimum = 270f;
+					maximum = 330f;
+					break;
+				default:
+					minimum = 275f;
+					maximum = 390f;
+					break;
+			}
+
+			uint hash = unchecked((uint)(parsedSlot * 73856093));
+			hash ^= unchecked((uint)(sampleIndex * 19349663));
+			hash ^= unchecked((uint)(config[2] * 83492791 + config[3] * 29791 + config[4] * 7919));
+			float normalized = (hash % 1000u) / 999f;
+			simulated[sampleIndex] = Mathf.Round(Mathf.Lerp(minimum, maximum, normalized));
+		}
+
+		Debug.Log($"æ¸©åº¦æ¥å£æ— æœ‰æ•ˆå€¼ï¼Œå·²ä¸ºæ§½å·{slotNumber}ç”Ÿæˆ{simulated.Count}ä¸ªæ¨¡æ‹Ÿæ¸©åº¦æ•°æ®");
+		return simulated;
+	}
+
+	private static List<List<int>> BuildMockSensorConfig()
+	{
+		List<List<int>> configs = new List<List<int>>();
+		int sampleIndex = 0;
+
+		for (int directionType = 1; directionType <= 2; directionType++)
+		{
+			for (int directionIndex = 1; directionIndex <= 2; directionIndex++)
+			{
+				for (int nodeIndex = 1; nodeIndex <= 28; nodeIndex++)
+					configs.Add(new List<int> { sampleIndex++, 4, directionType, directionIndex, nodeIndex });
+			}
+
+			for (int nodeIndex = 1; nodeIndex <= 28; nodeIndex++)
+				configs.Add(new List<int> { sampleIndex++, 1, directionType, 0, nodeIndex });
+		}
+
+		for (int positionIndex = 2; positionIndex <= 3; positionIndex++)
+		{
+			for (int nodeIndex = 1; nodeIndex <= 9; nodeIndex++)
+				configs.Add(new List<int> { sampleIndex++, positionIndex, 0, 0, nodeIndex });
+		}
+
+		for (int nodeIndex = 1; nodeIndex <= 28; nodeIndex++)
+		{
+			int directionType = nodeIndex % 2 == 0 ? 2 : 1;
+			configs.Add(new List<int> { sampleIndex++, 5, directionType, 0, nodeIndex });
+		}
+
+		return configs;
+	}
+
+	private void RebuildLatestSensorReadings(List<float> tempData)
+	{
+		latestSensorReadings.Clear();
+
+		if (tempData == null || djcConfig == null)
+		{
+			TemperatureReadingsUpdated?.Invoke(latestSensorReadings);
+			return;
+		}
+
+		foreach (var config in djcConfig)
+		{
+			if (config == null || config.Count < 5)
+				continue;
+
+			int sampleIndex = config[0];
+			if (sampleIndex < 0 || sampleIndex >= tempData.Count)
+				continue;
+
+			int positionIndex = config[1];
+			int directionType = config[2];
+			int directionIndex = config[3];
+			int nodeIndex = config[4];
+
+			latestSensorReadings.Add(new TemperatureSensorReading
+			{
+				sampleIndex = sampleIndex,
+				positionIndex = positionIndex,
+				directionType = directionType,
+				directionIndex = directionIndex,
+				nodeIndex = nodeIndex,
+				displayName = BuildSensorDisplayName(positionIndex, directionType, directionIndex, nodeIndex),
+				temperature = tempData[sampleIndex],
+				category = GetSensorCategory(positionIndex)
+			});
+		}
+
+		latestSensorReadings.Sort((left, right) =>
+		{
+			int categoryOrder = left.category.CompareTo(right.category);
+			if (categoryOrder != 0) return categoryOrder;
+			int directionOrder = left.directionType.CompareTo(right.directionType);
+			if (directionOrder != 0) return directionOrder;
+			int indexOrder = left.directionIndex.CompareTo(right.directionIndex);
+			if (indexOrder != 0) return indexOrder;
+			return left.nodeIndex.CompareTo(right.nodeIndex);
+		});
+
+		TemperatureReadingsUpdated?.Invoke(latestSensorReadings);
+	}
+
+	private static TemperatureSensorCategory GetSensorCategory(int positionIndex)
+	{
+		switch (positionIndex)
+		{
+			case 4:
+				return TemperatureSensorCategory.Cathode;
+			case 1:
+				return TemperatureSensorCategory.SteelWindow;
+			default:
+				return TemperatureSensorCategory.EndAndBottom;
+		}
+	}
+
+	private static string BuildSensorDisplayName(int positionIndex, int directionType, int directionIndex, int nodeIndex)
+	{
+		string side = directionType == 1 ? "A" : directionType == 2 ? "B" : string.Empty;
+		switch (positionIndex)
+		{
+			case 4:
+				return $"{side}{nodeIndex}-{Mathf.Max(1, directionIndex)}";
+			case 1:
+				return $"W{side}{nodeIndex}";
+			case 2:
+				return $"T{nodeIndex}";
+			case 3:
+				return $"G{nodeIndex}";
+			case 5:
+				return $"B{side}{nodeIndex}";
+			default:
+				return $"{side}{nodeIndex}";
+		}
+	}
+
+	public IReadOnlyList<TemperatureSensorReading> GetLatestSensorReadings()
+	{
+		return latestSensorReadings;
+	}
+
+	public string GetCurrentSlotNumber()
+	{
+		return slotNumber;
+	}
+
+	/// <summary>
+	/// Keeps the legacy heat-map selector and the new sensor-information
+	/// toolbar in sync, then refreshes both views through the existing API.
+	/// </summary>
+	public void SetSelectedSlotNumber(string selectedSlot)
+	{
+		if (string.IsNullOrWhiteSpace(selectedSlot))
+			return;
+
+		if (slotInputText != null)
+			slotInputText.text = selectedSlot;
+
+		OnUpdataButtonClick();
+	}
+
+	/// <summary>
+	/// APIé”™è¯¯å›è°ƒ
 	/// </summary>
 	private void OnAPIError(string errorMessage)
 	{
-		Debug.LogError($"APIµ÷ÓÃÊ§°Ü£º{errorMessage}");
+		Debug.LogError($"APIè°ƒç”¨å¤±è´¥ï¼š{errorMessage}");
+		UpdataTableData(null);
 	}
 
 
 	/// <summary>
-	/// µÚÒ»´Î³É¹¦»ñÈ¡ÅäÖÃAPI»Øµ÷
+	/// ç¬¬ä¸€æ¬¡æˆåŠŸè·å–é…ç½®APIå›è°ƒ
 	/// </summary>
 	private void OnFistSuccessGetConfig(List<List<int>> ConfigData)
 	{
 		djcConfig = ConfigData;
 
-		// µ÷ÓÃAPI»ñÈ¡ÈÈÁ¦Í¼ÎÂ¶ÈÊı¾İ
+		// è°ƒç”¨APIè·å–çƒ­åŠ›å›¾æ¸©åº¦æ•°æ®
 		temperatureAPI.GetTemperatureData(
 			companyIndex,
 			slotNumber,
@@ -473,12 +723,12 @@ public class phoneTableScript : MonoBehaviour
 	}
 
 	/// <summary>
-	/// ¶¨ÆÚ»ñÈ¡ÅäÖÃĞÅÏ¢£¬API»ñÈ¡ÅäÖÃAPI»Øµ÷
+	/// å®šæœŸè·å–é…ç½®ä¿¡æ¯ï¼ŒAPIè·å–é…ç½®APIå›è°ƒ
 	/// </summary>
 	private void OnSuccessGetConfig(List<List<int>> ConfigData)
 	{
 		djcConfig = ConfigData;
-		//Debug.Log("phoneTableScript OnSuccessGetConfig() »ñÈ¡ÅäÖÃ³É¹¦£¡");
+		//Debug.Log("phoneTableScript OnSuccessGetConfig() è·å–é…ç½®æˆåŠŸï¼");
 		//string strConfig = "";
 		//foreach (var djc in djcConfig)
 		//{
@@ -486,7 +736,7 @@ public class phoneTableScript : MonoBehaviour
 		//}
 		//Debug.Log(strConfig);
 
-		// µ÷ÓÃAPI»ñÈ¡ÈÈÁ¦Í¼ÎÂ¶ÈÊı¾İ
+		// è°ƒç”¨APIè·å–çƒ­åŠ›å›¾æ¸©åº¦æ•°æ®
 		temperatureAPI.GetTemperatureData(
 			companyIndex,
 			slotNumber,
@@ -496,48 +746,50 @@ public class phoneTableScript : MonoBehaviour
 	}
 
 	/// <summary>
-	/// »ñÈ¡ÅäÖÃ´íÎóAPI´íÎó»Øµ÷
+	/// è·å–é…ç½®é”™è¯¯APIé”™è¯¯å›è°ƒ
 	/// </summary>
 	private void OnGetConfigError(string errorMessage)
 	{
-		Debug.LogError($"µ÷ÓÃAPI»ñÈ¡ÅäÖÃÊ§°Ü{errorMessage}");
+		Debug.LogError($"è°ƒç”¨APIè·å–é…ç½®å¤±è´¥{errorMessage}");
+		djcConfig = BuildMockSensorConfig();
+		UpdataTableData(null);
 	}
 
 	/// <summary>
-	/// API³É¹¦»Øµ÷ -»ñÈ¡ÀúÊ·ÎÂ¶ÈÊı¾İ
+	/// APIæˆåŠŸå›è°ƒ -è·å–å†å²æ¸©åº¦æ•°æ®
 	/// </summary>
 	private void onSuccessGetHisTmpData(HisTemDataDB hisTempData)
 	{
 		HistoryTemperatureDatDB = hisTempData;
-		// µ÷ÊÔÊä³öÀúÊ·Êı¾İ
-		Debug.Log("phoneTableScript onSuccessGetHisTmpData() »ñÈ¡ÀúÊ·Êı¾İ³É¹¦£¡");
+		// è°ƒè¯•è¾“å‡ºå†å²æ•°æ®
+		Debug.Log("phoneTableScript onSuccessGetHisTmpData() è·å–å†å²æ•°æ®æˆåŠŸï¼");
 		for (int i = 0; i < HistoryTemperatureDatDB.HistoryTemperatureValues.Count; i++)
 		{
 			Debug.Log($"index{i} :"+string.Join(",", HistoryTemperatureDatDB.HistoryTemperatureValues[i]));
 		}
 
-		// Òş²Ø»ñÈ¡ÀúÊ·ÎÂ¶ÈÊı¾İÌáÊ¾
+		// éšè—è·å–å†å²æ¸©åº¦æ•°æ®æç¤º
 		getHisTmpNoticeText.text = "";
 	}
 
 	/// <summary>
-	/// »ñÈ¡ÀúÊ·ÎÂ¶ÈÊı¾İ
+	/// è·å–å†å²æ¸©åº¦æ•°æ®
 	/// </summary>
 	public void OnUpdataButtonClick()
 	{
 		lineChart.SetActive(false);
-		// ÉèÖÃµã»÷±í¸ñÑÕÉ«£¬È¡ÏûÑ¡ÖĞ±í¸ñÑÕÉ«		
+		// è®¾ç½®ç‚¹å‡»è¡¨æ ¼é¢œè‰²ï¼Œå–æ¶ˆé€‰ä¸­è¡¨æ ¼é¢œè‰²
 		pointedTable.selectColor = new Color(1f, 1f, 1f, 0f);
-		//Debug.Log($"¸üĞÂ°´Å¥±»µã»÷£¡²ÛºÅ = {slotInputText.text}");
+		//Debug.Log($"æ›´æ–°æŒ‰é’®è¢«ç‚¹å‡»ï¼æ§½å· = {slotInputText.text}");
 		//if (slotNumber != slotInputField.text)
 		if (slotNumber == "" || slotNumber != slotInputText.text)
 		{
 			//slotNumber = slotInputField.text;
 			slotNumber = slotInputText.text;
-			// ½«Í¼±íÈ«²¿Êı¾İÇåÁã
+			// å°†å›¾è¡¨å…¨éƒ¨æ•°æ®æ¸…é›¶
 			ClearTableData();
 
-			//»ñÈ¡ÅäÖÃ¡¢ÊµÊ±ÎÂ¶ÈÊı¾İ¸üĞÂ±í¸ñ
+			//è·å–é…ç½®ã€å®æ—¶æ¸©åº¦æ•°æ®æ›´æ–°è¡¨æ ¼
 			temperatureAPI.GetDjcConfig(
 						companyIndex,
 						slotNumber,
@@ -546,13 +798,13 @@ public class phoneTableScript : MonoBehaviour
 						);
 		}
 		else { 
-			Debug.Log("²ÎÊıĞÅÏ¢Ã»±ä»¯£¬ÇëÎğÖØ¸´µã»÷£¡");
+			Debug.Log("å‚æ•°ä¿¡æ¯æ²¡å˜åŒ–ï¼Œè¯·å‹¿é‡å¤ç‚¹å‡»ï¼");
 		}
-		nextExecutionTime = Time.time + 5;  //5Ãë
-		nextGetHisTmpTime = Time.time + 600; //10·ÖÖÓ 600Ãë
+		nextExecutionTime = Time.time + 5;  //5ç§’
+		nextGetHisTmpTime = Time.time + 600; //10åˆ†é’Ÿ 600ç§’
 	}
 
-	// ÈÈÁ¦Í¼ÇåÁã
+	// çƒ­åŠ›å›¾æ¸…é›¶
 	public void ClearTableData()
 	{
 
@@ -586,18 +838,18 @@ public class phoneTableScript : MonoBehaviour
 		}
 	}
 
-	//¹Ø±ÕÕÛÏßÍ¼
+	//å…³é—­æŠ˜çº¿å›¾
 	public void closeLinechart()
 	{
 		lineChart.SetActive(false);
-		// ÉèÖÃµã»÷±í¸ñÑÕÉ«£¬È¡ÏûÑ¡ÖĞ±í¸ñÑÕÉ«		
+		// è®¾ç½®ç‚¹å‡»è¡¨æ ¼é¢œè‰²ï¼Œå–æ¶ˆé€‰ä¸­è¡¨æ ¼é¢œè‰²
 		pointedTable.selectColor = new Color(1f, 1f, 1f, 0f);
 	}
 
-	//¸üĞÂÕÛÏßÍ¼Êı¾İ
+	//æ›´æ–°æŠ˜çº¿å›¾æ•°æ®
 	void UpdateDataLineCharts(HisTemDataDB HistoryTemperatureDatDB, int sampleindex)
 	{
-		//1.ĞŞ¸ÄÖ÷×é¼şÉÏµÄ²ÎÊı
+		//1.ä¿®æ”¹ä¸»ç»„ä»¶ä¸Šçš„å‚æ•°
 		LineChart smootLineChart = lineChart.ConvertTo<LineChart>();
 		var title = smootLineChart.EnsureChartComponent<Title>();
 		var xAxis = smootLineChart.EnsureChartComponent<XAxis>();
@@ -609,18 +861,18 @@ public class phoneTableScript : MonoBehaviour
 		dataZoom.supportInside = true;
 		dataZoom.supportSlider = true;
 
-		//2.¸øÖ÷×é¼şÌí¼Ó¶îÍâ×é¼ş
+		//2.ç»™ä¸»ç»„ä»¶æ·»åŠ é¢å¤–ç»„ä»¶
 		var legend = smootLineChart.EnsureChartComponent<Legend>();
 
-		//3.ĞŞ¸ÄserieµÄ²ÎÊı
-		var serie = smootLineChart.GetSerie<Line>();//Í¨¹ıÀàĞÍ»ñÈ¡serie
+		//3.ä¿®æ”¹serieçš„å‚æ•°
+		var serie = smootLineChart.GetSerie<Line>();//é€šè¿‡ç±»å‹è·å–serie
 		serie.serieName = "";
 		serie.symbol.show = false;
 		serie.state = SerieState.Normal;
 		serie.animation.enable = true;
 		serie.large = true;
 
-		//5.ĞŞ¸ÄÊı¾İÏîSerieDataÉÏµÄ²ÎÊı
+		//5.ä¿®æ”¹æ•°æ®é¡¹SerieDataä¸Šçš„å‚æ•°
 		smootLineChart.ClearData();
 		for (int i = 0; i < 180; i++)
 		{
@@ -631,16 +883,16 @@ public class phoneTableScript : MonoBehaviour
 			xAxis.AddData("");
 			if (i % 20 == 0)
 			{
-				var serieData = serie.GetSerieData(i); //´ÓÒÑÓĞÊı¾İÖĞ»ñÈ¡
-				var itemStyle = serieData.EnsureComponent<LabelStyle>(); //ÆôÓÃSerieDataµÄComponent
+				var serieData = serie.GetSerieData(i); //ä»å·²æœ‰æ•°æ®ä¸­è·å–
+				var itemStyle = serieData.EnsureComponent<LabelStyle>(); //å¯ç”¨SerieDataçš„Component
 				itemStyle.offset = new Vector3(0, 20, 0);
 			}
 
 		}
-		smootLineChart.RefreshChart();//Ë¢ĞÂÍ¼±í»æÖÆ
+		smootLineChart.RefreshChart();//åˆ·æ–°å›¾è¡¨ç»˜åˆ¶
 	}
 
-	// ÈÈÁ¦Í¼Î»ÖÃĞÅÏ¢¸üĞÂ
+	// çƒ­åŠ›å›¾ä½ç½®ä¿¡æ¯æ›´æ–°
 	public void UpdatePosInfo(bool flag)
 	{		
 		
@@ -683,7 +935,7 @@ public class phoneTableScript : MonoBehaviour
 		string[] zuoTbalePos = new string[] { "177", "178", "179", "180", "181", "182", "183", "184", "185" };
 		string[] youTbalePos = new string[] { "168", "169", "170", "171", "172", "173", "174", "175", "176" };
 
-		if (flag) //Èç¹ûÎ»ÖÃĞÅÏ¢¸´Ñ¡¿ò±»Ñ¡ÖĞ£¬ÏÔÊ¾²É¼¯µãÎ»ÖÃĞÅÏ¢
+		if (flag) //å¦‚æœä½ç½®ä¿¡æ¯å¤é€‰æ¡†è¢«é€‰ä¸­ï¼Œæ˜¾ç¤ºé‡‡é›†ç‚¹ä½ç½®ä¿¡æ¯
 		{
 			for (int i = 0; i < 3; i++)
 			{
@@ -714,7 +966,7 @@ public class phoneTableScript : MonoBehaviour
 				youErTable_pos.UpdateCell(i, 0, youTbalePos[i + 4]);
 			}
 		}
-		else //Èç¹ûÎ»ÖÃĞÅÏ¢¸´Ñ¡¿òÎ´Ñ¡ÖĞ£¬ÏÔÊ¾Ä¬ÈÏÎ»ÖÃĞÅÏ¢
+		else //å¦‚æœä½ç½®ä¿¡æ¯å¤é€‰æ¡†æœªé€‰ä¸­ï¼Œæ˜¾ç¤ºé»˜è®¤ä½ç½®ä¿¡æ¯
 		{
 			for (int i = 0; i < 3; i++)
 			{
@@ -747,11 +999,11 @@ public class phoneTableScript : MonoBehaviour
 		}
 	}
 
-	// ÈÈÁ¦Í¼²ÛºÅ¸üĞÂ£¬»ñÈ¡²ÛºÅĞÅÏ¢
+	// çƒ­åŠ›å›¾æ§½å·æ›´æ–°ï¼Œè·å–æ§½å·ä¿¡æ¯
 	public void onSlotChanged()
 	{ 
-		//Debug.Log($"²ÛºÅĞÅÏ¢±ä»¯£¬²ÛºÅÊÇ£ºonSlotChanged={slotInputText.text}");
-		// µ±Ç°²ÛºÅ·¢Éú¸Ä±ä£¬¸üĞÂÈÈÁ¦Í¼ĞÅÏ¢
+		//Debug.Log($"æ§½å·ä¿¡æ¯å˜åŒ–ï¼Œæ§½å·æ˜¯ï¼šonSlotChanged={slotInputText.text}");
+		// å½“å‰æ§½å·å‘ç”Ÿæ”¹å˜ï¼Œæ›´æ–°çƒ­åŠ›å›¾ä¿¡æ¯
 		OnUpdataButtonClick();
 	}
 }

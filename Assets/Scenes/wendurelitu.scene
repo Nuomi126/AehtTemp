@@ -135848,7 +135848,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 82e8aaf577e945e49a272bf33d25d526, type: 3}
   m_Name: 
   m_EditorClassIdentifier: 
-  sceneOrientation: 1
+  sceneOrientation: 3
 --- !u!114 &1226897284
 MonoBehaviour:
   m_ObjectHideFlags: 0

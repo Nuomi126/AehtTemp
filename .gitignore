@@ -12,11 +12,26 @@ MemoryCaptures/
 *.sln
 .DS_Store
 Thumbs.db
-Aeh_BurstDebugInformation_DoNotShip/
-**/BurstDebugInformation_DoNotShip/
+*_BurstDebugInformation_DoNotShip/
+**/*_BurstDebugInformation_DoNotShip/
 
 # Local runtime output and private credentials
 *.log
 wildfire-auth-private.json
 *.lfs-pointer.bak
 *.lfs-pointer.bak.meta
+
+# Local one-off migration, diagnostic, and test artifacts
+/Patch.cs
+/TempTop.txt
+/TextIncrementer.cs
+/UITable_Analysis_Report.md
+/api_doc*.txt
+/build_release.log
+/builder*.py
+/patch.py
+/server/
+/XCharts-Daemon-master/
+/wildfire_client.py
+/wildfirechat-*
+/WILDFIRECHAT_*.md

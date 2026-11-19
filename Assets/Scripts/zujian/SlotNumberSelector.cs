@@ -32,9 +32,11 @@ public class SlotNumberSelector : MonoBehaviour
     // 当前筛选条件
     private int currentWorkshopNumber = -1;
     private int currentWorkAreaNumber = -1;
+    private bool usingFallbackData;
 
     void Start()
     {
+		ResolveMissingReferences();
 		// 获取当前激活场景的名称
 		string sceneName = SceneManager.GetActiveScene().name;
 		//UnityEngine.Debug.Log("当前场景名称: " + sceneName);
@@ -87,6 +89,15 @@ public class SlotNumberSelector : MonoBehaviour
 		}
 	}
 
+    private void ResolveMissingReferences()
+    {
+        if (selectorPanel == null)
+            selectorPanel = gameObject;
+
+        if (itemScrollRect == null && selectorPanel != null)
+            itemScrollRect = selectorPanel.GetComponentInChildren<ScrollRect>(true);
+    }
+
 	// 补充刷新方法，用于重载槽号数据并更新UI
 	private void RefreshData()
 	{
@@ -102,12 +113,72 @@ public class SlotNumberSelector : MonoBehaviour
 			GlobalElectrolyticCellDataManager.Instance.OnDataUpdated -= OnGlobalDataLoaded;
 		}
 		
-		// 重新初始化并刷新数据
-		InitializeDefaultData();
-		RefreshData();
+		// 当前工区优先，避免数据到达后跳回全局第一个工区。
+		if (currentWorkshopNumber > 0 && currentWorkAreaNumber > 0)
+			PrepareForWorkArea($"{currentWorkshopNumber}车间{currentWorkAreaNumber}工区", selectedSlotNumber);
+		else
+			InitializeDefaultData();
 		
 		Debug.Log("全局数据加载完成，槽号选择器已自动刷新");
 	}
+
+    /// <summary>
+    /// 为指定工区准备完整槽号列表。全局配置可用时使用真实槽号；
+    /// 编辑器或接口暂未返回配置时，沿用分区监控场景的55槽分区规则生成可操作列表。
+    /// </summary>
+    public string PrepareForWorkArea(string formattedWorkArea, string preferredSlot = null)
+    {
+        ResolveMissingReferences();
+
+        Match match = Regex.Match(formattedWorkArea ?? string.Empty, @"(\d+)车间(\d+)工区");
+        if (!match.Success)
+            return selectedSlotNumber;
+
+        int workshop = int.Parse(match.Groups[1].Value);
+        int workArea = int.Parse(match.Groups[2].Value);
+        bool globalReady = GlobalElectrolyticCellDataManager.Instance != null &&
+                           GlobalElectrolyticCellDataManager.Instance.isDataLoaded &&
+                           GlobalElectrolyticCellDataManager.Instance.GetAllConfigs().Count > 0;
+
+        bool sameFilter = currentWorkshopNumber == workshop && currentWorkAreaNumber == workArea;
+        bool mustRefresh = !sameFilter || slotNumberItems.Count <= 1 || (globalReady && usingFallbackData);
+
+        currentWorkshopNumber = workshop;
+        currentWorkAreaNumber = workArea;
+
+        if (mustRefresh)
+        {
+            List<string> resolvedItems = new List<string>();
+            if (globalReady && workshop <= byte.MaxValue && workArea <= byte.MaxValue)
+            {
+                resolvedItems = GlobalElectrolyticCellDataManager.Instance
+                    .GetSlotNumbersByWorkshopAndArea((byte)workshop, (byte)workArea)
+                    .Select(value => value.ToString())
+                    .ToList();
+            }
+
+            usingFallbackData = resolvedItems.Count == 0;
+            if (usingFallbackData)
+            {
+                int baseSlotId = workshop * 1000 + 1 + (workArea - 1) * 55;
+                for (int i = 0; i < 55; i++)
+                    resolvedItems.Add((baseSlotId + i).ToString());
+            }
+
+            slotNumberItems = resolvedItems;
+        }
+
+        if (!string.IsNullOrWhiteSpace(preferredSlot) && slotNumberItems.Contains(preferredSlot))
+            selectedSlotNumber = preferredSlot;
+        else if (!slotNumberItems.Contains(selectedSlotNumber))
+            selectedSlotNumber = slotNumberItems.FirstOrDefault();
+
+        if (itemScrollRect != null)
+            PopulateScrollRect(itemScrollRect, slotNumberItems);
+
+        UpdateDisplayText(null, selectedSlotNumber);
+        return selectedSlotNumber;
+    }
 
     // 新增方法：初始化默认数据
     public void InitializeDefaultData()
@@ -284,13 +355,10 @@ public class SlotNumberSelector : MonoBehaviour
     }
 
 
-    // 简化OpenSelectorPanel方法
+    // 打开时优先复用已生成的列表。数据更新事件或工区确认时会主动刷新，
+    // 不再在每次点击时销毁并重建全部槽号项。
     public void OpenSelectorPanel()
     {
-        // 强制确保面板处于正确的初始状态
-        if (selectorPanel != null)
-            selectorPanel.SetActive(false);
-        
         // 如果有其他选择器处于激活状态，先关闭它
         if (currentActiveSelector != null && currentActiveSelector != selectorPanel)
         {
@@ -303,9 +371,25 @@ public class SlotNumberSelector : MonoBehaviour
             selectorPanel.SetActive(true);
             currentActiveSelector = selectorPanel;
         }
-        
-        // 异步加载实际数据
-        StartCoroutine(LoadActualDataAsync());
+
+        bool hasOnlyPlaceholder = slotNumberItems.Count == 0 || slotNumberItems.All(item =>
+            string.IsNullOrWhiteSpace(item) || item.Contains("加载") || item.Contains("初始化") || item.StartsWith("无"));
+        bool globalDataReady = GlobalElectrolyticCellDataManager.Instance != null &&
+                               GlobalElectrolyticCellDataManager.Instance.isDataLoaded;
+
+        if (hasOnlyPlaceholder && globalDataReady)
+        {
+            LoadSlotNumberDataFromGlobal();
+        }
+        else if (itemScrollRect != null && itemScrollRect.content != null && slotNumberItems.Count > 0)
+        {
+            Transform content = itemScrollRect.content;
+            Text firstLabel = content.childCount > 0 ? content.GetChild(0).GetComponent<Text>() : null;
+            bool contentMatchesData = content.childCount == slotNumberItems.Count &&
+                                      firstLabel != null && firstLabel.text == slotNumberItems[0];
+            if (!contentMatchesData)
+                PopulateScrollRect(itemScrollRect, slotNumberItems);
+        }
     }
 
     // 新增协程：异步加载实际数据
@@ -656,7 +740,7 @@ public class SlotNumberSelector : MonoBehaviour
         }
     }
 
-    void CancelSelection()
+    public void CancelSelection()
     {
         if (selectorPanel != null)
             selectorPanel.SetActive(false);
@@ -681,7 +765,7 @@ public class SlotNumberSelector : MonoBehaviour
         phoneTableScript phoneScript = FindObjectOfType<phoneTableScript>();
         if (phoneScript != null)
         {
-            phoneScript.OnUpdataButtonClick();
+            phoneScript.SetSelectedSlotNumber(selectedSlotNumber);
         }
 
         if (selectorPanel != null)
@@ -773,5 +857,39 @@ public class SlotNumberSelector : MonoBehaviour
             return -1;
             
         return slotNumberItems.IndexOf(slotNumber);
+    }
+
+    /// <summary>
+    /// Selects the previous/next slot from the current work-area result set.
+    /// </summary>
+    public bool SelectRelativeSlot(int offset)
+    {
+        if (slotNumberItems == null || slotNumberItems.Count == 0)
+        {
+            LoadSlotNumberDataFromGlobal();
+        }
+
+        if (slotNumberItems == null || slotNumberItems.Count == 0)
+            return false;
+
+        int currentIndex = slotNumberItems.IndexOf(selectedSlotNumber);
+        if (currentIndex < 0)
+            currentIndex = 0;
+
+        int nextIndex = (currentIndex + offset) % slotNumberItems.Count;
+        if (nextIndex < 0)
+            nextIndex += slotNumberItems.Count;
+
+        selectedSlotNumber = slotNumberItems[nextIndex];
+        UpdateDisplayText(null, selectedSlotNumber);
+        OnSlotConfirmed?.Invoke(selectedSlotNumber);
+
+        phoneTableScript phoneScript = FindObjectOfType<phoneTableScript>();
+        if (phoneScript != null)
+        {
+            phoneScript.SetSelectedSlotNumber(selectedSlotNumber);
+        }
+
+        return true;
     }
 }
