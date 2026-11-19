@@ -1,36 +1,28 @@
-# zyzy1199
+# AehtTemp
 
-#### Description
-{**When you're done, you can delete the content in this README and update the file with details for others getting started with your repository**}
+Unity project for aluminium reduction cell temperature monitoring and data visualization.
 
-#### Software Architecture
-Software architecture description
+## Development environment
 
-#### Installation
+- Tuanjie Editor `2022.3.38t3`
+- Tuanjie Editor version `1.3.3`
+- Git LFS
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+## Clone
 
-#### Instructions
+The project contains large files managed by Git LFS. Use Git and Git LFS for a complete clone:
 
-1.  xxxx
-2.  xxxx
-3.  xxxx
+```powershell
+git lfs install
+git clone https://github.com/Nuomi126/AehtTemp.git
+cd AehtTemp
+git lfs pull
+```
 
-#### Contribution
+## Project structure
 
-1.  Fork the repository
-2.  Create Feat_xxx branch
-3.  Commit your code
-4.  Create Pull Request
+- `Assets`: scenes, scripts, and project assets
+- `Packages`: Unity package configuration
+- `ProjectSettings`: Unity project settings
 
-
-#### Gitee Feature
-
-1.  You can use Readme\_XXX.md to support different languages, such as Readme\_en.md, Readme\_zh.md
-2.  Gitee blog [blog.gitee.com](https://blog.gitee.com)
-3.  Explore open source project [https://gitee.com/explore](https://gitee.com/explore)
-4.  The most valuable open source project [GVP](https://gitee.com/gvp)
-5.  The manual of Gitee [https://gitee.com/help](https://gitee.com/help)
-6.  The most popular members  [https://gitee.com/gitee-stars/](https://gitee.com/gitee-stars/)
+Generated directories such as `Library`, `Temp`, `Logs`, `obj`, IDE settings, and local build artifacts are excluded from the repository.
