@@ -52,7 +52,14 @@ namespace Aeht.UI
             for (int i = 0; i < count; i++)
             {
                 int at = HeaderSize + i * RecordSize;
-                if (ReadU16(frame, at) != requestedSlot) return false;
+                // The service leaves a zero-filled record for missing two-minute
+                // intervals. Keep its gap on the chart without rejecting the day.
+                if (ReadU16(frame, at) == 0 && IsZeroRecord(frame, at)) continue;
+                if (ReadU16(frame, at) != requestedSlot)
+                {
+                    samples.Clear();
+                    return false;
+                }
                 int recordIndex = ReadU16(frame, at + 2);
                 if (recordIndex < 1 || recordIndex > 720) continue;
                 var sample = new Sample
@@ -79,6 +86,13 @@ namespace Aeht.UI
         }
 
         private static int ReadU16(byte[] data, int offset) => (data[offset] << 8) | data[offset + 1];
+
+        private static bool IsZeroRecord(byte[] data, int offset)
+        {
+            for (int i = 0; i < RecordSize; i++)
+                if (data[offset + i] != 0) return false;
+            return true;
+        }
 
         private static uint ReadU32(byte[] data, int offset) =>
             ((uint)data[offset] << 24) | ((uint)data[offset + 1] << 16) |
