@@ -1,6 +1,6 @@
 using JetBrains.Annotations;
 using System;
-//using System.Collections;
+using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
 using TMPro;
@@ -46,6 +46,24 @@ public class phoneTableScript : MonoBehaviour
 	public event Action<IReadOnlyList<TemperatureSensorReading>> TemperatureReadingsUpdated;
 
 	private readonly List<TemperatureSensorReading> latestSensorReadings = new();
+	private readonly List<TemperatureCellColorRequest> temperatureCellColorRequests = new();
+	private Coroutine temperatureColorCoroutine;
+
+	private static readonly Color32 TemperatureBlue = new Color32(21, 101, 192, 255);
+	private static readonly Color32 TemperatureBlueGreen = new Color32(0, 137, 123, 255);
+	private static readonly Color32 TemperatureGreen = new Color32(0, 137, 62, 255);
+	private static readonly Color32 TemperatureYellow = new Color32(194, 146, 0, 255);
+	private static readonly Color32 TemperatureOrange = new Color32(239, 108, 0, 255);
+	private static readonly Color32 TemperatureRed = new Color32(211, 47, 47, 255);
+	private static readonly Color32 TemperatureUnavailable = new Color32(117, 117, 117, 255);
+
+	private sealed class TemperatureCellColorRequest
+	{
+		public UITable table;
+		public int row;
+		public int column;
+		public float temperature;
+	}
 
 	// 表格的名称
 	[Header("UI组件")]
@@ -155,15 +173,14 @@ public class phoneTableScript : MonoBehaviour
 	void Update()
     {
 		if (slotNumber != "" && Time.time >= nextExecutionTime) // 检查是否到了执行时间点
-		{			
-			// 获取电解槽配置信息
-			temperatureAPI.GetDjcConfig(
-							companyIndex,
-							slotNumber,
-							onConfigSuccess: OnSuccessGetConfig,
-							onConfigError: OnGetConfigError
-							);
-
+		{
+			// 测点配置只在首次进入或槽号切换时获取；定时刷新只拉取温度。
+			temperatureAPI.GetTemperatureData(
+				companyIndex,
+				slotNumber,
+				onSuccess: OnAPISuccess,
+				onError: OnAPIError
+			);
 			nextExecutionTime = Time.time + 5; // 更新下次执行的时间点为当前时间加5秒
 		}
 		if (enableHistoryTemperature && slotNumber != "" && Time.time >= nextGetHisTmpTime) // 检查是否到了执行时间点
@@ -397,6 +414,7 @@ public class phoneTableScript : MonoBehaviour
 		tempData = ResolveTemperatureData(tempData);
 		
 		temperatureData = tempData;
+		BeginTemperatureCellUpdate();
 
 		foreach (var config in djcConfig)
 		{
@@ -417,13 +435,11 @@ public class phoneTableScript : MonoBehaviour
 			{
 				if (directionindex == 1)
 				{
-					xiaTable.UpdateCell(0, 28 - nodeindex, tempData[sampleindex].ToString());
-					// 设置单元格颜色
-					
+					UpdateTemperatureCell(xiaTable, 0, 28 - nodeindex, tempData[sampleindex]);
 				}
 				else if (directionindex == 2)
 				{
-					xiaTable.UpdateCell(1, 28 - nodeindex, tempData[sampleindex].ToString());
+					UpdateTemperatureCell(xiaTable, 1, 28 - nodeindex, tempData[sampleindex]);
 				}
 			}
 			// B面阴极 B: directiontype=2 AND posindex=4
@@ -431,34 +447,34 @@ public class phoneTableScript : MonoBehaviour
 			{
 				if (directionindex == 1)
 				{
-					shangTable.UpdateCell(2, 28 - nodeindex, tempData[sampleindex].ToString());
+					UpdateTemperatureCell(shangTable, 2, 28 - nodeindex, tempData[sampleindex]);
 				}
 				else if (directionindex == 2)
 				{
-					shangTable.UpdateCell(1, 28 - nodeindex, tempData[sampleindex].ToString());
+					UpdateTemperatureCell(shangTable, 1, 28 - nodeindex, tempData[sampleindex]);
 				}
 
 			}
 			// A面钢窗WA: directiontype=1 AND posindex=1
 			else if (directiontype == 1 && posindex == 1)
 			{
-				xiaTable.UpdateCell(2, 28 - nodeindex, tempData[sampleindex].ToString());
+				UpdateTemperatureCell(xiaTable, 2, 28 - nodeindex, tempData[sampleindex]);
 			}
 			// B面钢窗WB: directiontype=2 AND posindex=1
 			else if (directiontype == 2 && posindex == 1)
 			{
-				shangTable.UpdateCell(0, 28 - nodeindex, tempData[sampleindex].ToString());
+				UpdateTemperatureCell(shangTable, 0, 28 - nodeindex, tempData[sampleindex]);
 			}
 			// 出铝端端口: directiontype=0 AND posindex=2
 			else if (directiontype == 0 && posindex == 2)
 			{
 				if (nodeindex <= 4)
 				{
-					youYiTable.UpdateCell(nodeindex - 1, 0, tempData[sampleindex].ToString());
+					UpdateTemperatureCell(youYiTable, nodeindex - 1, 0, tempData[sampleindex]);
 				}
 				if (nodeindex >= 5 && nodeindex <= 9)
 				{
-					youErTable.UpdateCell(nodeindex - 5, 0, tempData[sampleindex].ToString());
+					UpdateTemperatureCell(youErTable, nodeindex - 5, 0, tempData[sampleindex]);
 				}
 			}
 			// 烟道端端口: directiontype=0 AND posindex=3
@@ -466,11 +482,11 @@ public class phoneTableScript : MonoBehaviour
 			{
 				if (nodeindex <= 4)
 				{
-					zuoYiTable.UpdateCell(nodeindex - 1, 0, tempData[sampleindex].ToString());
+					UpdateTemperatureCell(zuoYiTable, nodeindex - 1, 0, tempData[sampleindex]);
 				}
 				if (nodeindex >= 5 && nodeindex <= 9)
 				{
-					zuoErTable.UpdateCell(nodeindex - 5, 0, tempData[sampleindex].ToString());
+					UpdateTemperatureCell(zuoErTable, nodeindex - 5, 0, tempData[sampleindex]);
 				}
 			}
 			// 底部: directionindex=0 AND posindex=5
@@ -478,18 +494,127 @@ public class phoneTableScript : MonoBehaviour
 			{
 				if (directiontype == 1)
 				{
-					zhongJianTable.UpdateCell(1, 14 - (int)((nodeindex + 1) / 2), tempData[sampleindex].ToString());
+					UpdateTemperatureCell(zhongJianTable, 1, 14 - (int)((nodeindex + 1) / 2), tempData[sampleindex]);
 				}
 				else if (directiontype == 2)
 				{
-					zhongJianTable.UpdateCell(0, 14 - (int)(nodeindex / 2), tempData[sampleindex].ToString());
+					UpdateTemperatureCell(zhongJianTable, 0, 14 - (int)(nodeindex / 2), tempData[sampleindex]);
 				}
 
 			}
 		}
 
 		RebuildLatestSensorReadings(tempData);
+		if (temperatureCellColorRequests.Count > 0)
+			ScheduleTemperatureTextColorRefresh();
 
+	}
+
+	/// <summary>
+	/// Returns the discrete text color used by the heat-map and its legend.
+	/// A boundary value belongs to the next range: 50, 100, 300, 350 and 400.
+	/// </summary>
+	public static Color32 GetTemperatureTextColor(float temperature)
+	{
+		if (float.IsNaN(temperature) || float.IsInfinity(temperature)) return TemperatureUnavailable;
+		if (temperature < 50f) return TemperatureBlue;
+		if (temperature < 100f) return TemperatureBlueGreen;
+		if (temperature < 300f) return TemperatureGreen;
+		if (temperature < 350f) return TemperatureYellow;
+		if (temperature < 400f) return TemperatureOrange;
+		return TemperatureRed;
+	}
+
+	private static string FormatHeatMapTemperature(float temperature)
+	{
+		if (float.IsNaN(temperature) || float.IsInfinity(temperature)) return "—";
+		return Mathf.Approximately(temperature, Mathf.Round(temperature))
+			? Mathf.RoundToInt(temperature).ToString()
+			: temperature.ToString("0.0");
+	}
+
+	private void UpdateTemperatureCell(UITable table, int row, int column, float temperature)
+	{
+		if (table == null)
+			return;
+
+		string formattedTemperature = FormatHeatMapTemperature(temperature);
+		TableCell cell = table.GetData(row, column);
+		if (cell == null)
+			return;
+
+		// Keep the data model current for a later resize, but update the
+		// existing label directly so UITable does not rebuild the whole table.
+		cell.stringValue = formattedTemperature;
+		if (TryUpdateTemperatureLabel(table, row, column, formattedTemperature, temperature))
+			return;
+
+		// During initialisation the runtime labels may not exist yet. Only that
+		// path falls back to UITable's deferred rebuild.
+		table.UpdateCell(row, column, formattedTemperature);
+		temperatureCellColorRequests.Add(new TemperatureCellColorRequest
+		{
+			table = table,
+			row = row,
+			column = column,
+			temperature = temperature
+		});
+	}
+
+	private static bool TryUpdateTemperatureLabel(UITable table, int row, int column,
+		string formattedTemperature, float temperature)
+	{
+		if (table == null || table.context?.dataLabels == null)
+			return false;
+
+		int columnCount = table.columnCount;
+		int labelIndex = row * columnCount + column;
+		if (columnCount <= 0 || labelIndex < 0 || labelIndex >= table.context.dataLabels.Count)
+			return false;
+
+		ChartLabel label = table.context.dataLabels[labelIndex];
+		if (label == null || label.text == null)
+			return false;
+
+		label.SetText(formattedTemperature);
+		label.SetTextColor(GetTemperatureTextColor(temperature));
+		label.text.SetFontStyle(FontStyle.Bold);
+		return true;
+	}
+
+	private void BeginTemperatureCellUpdate()
+	{
+		if (temperatureColorCoroutine != null)
+		{
+			StopCoroutine(temperatureColorCoroutine);
+			temperatureColorCoroutine = null;
+		}
+		temperatureCellColorRequests.Clear();
+	}
+
+	private void ScheduleTemperatureTextColorRefresh()
+	{
+		if (temperatureColorCoroutine != null)
+			StopCoroutine(temperatureColorCoroutine);
+		temperatureColorCoroutine = StartCoroutine(ApplyTemperatureTextColorsAfterTableRefresh());
+	}
+
+	private IEnumerator ApplyTemperatureTextColorsAfterTableRefresh()
+	{
+		// UITable rebuilds ChartLabel objects during the frame's data-dirty pass.
+		yield return new WaitForEndOfFrame();
+
+		foreach (TemperatureCellColorRequest request in temperatureCellColorRequests)
+		{
+			TryUpdateTemperatureLabel(
+				request.table,
+				request.row,
+				request.column,
+				FormatHeatMapTemperature(request.temperature),
+				request.temperature);
+		}
+
+		temperatureColorCoroutine = null;
 	}
 
 	/// <summary>
@@ -723,29 +848,6 @@ public class phoneTableScript : MonoBehaviour
 	}
 
 	/// <summary>
-	/// 定期获取配置信息，API获取配置API回调
-	/// </summary>
-	private void OnSuccessGetConfig(List<List<int>> ConfigData)
-	{
-		djcConfig = ConfigData;
-		//Debug.Log("phoneTableScript OnSuccessGetConfig() 获取配置成功！");
-		//string strConfig = "";
-		//foreach (var djc in djcConfig)
-		//{
-		//	strConfig = strConfig + string.Join(",", djc) + "\n";
-		//}
-		//Debug.Log(strConfig);
-
-		// 调用API获取热力图温度数据
-		temperatureAPI.GetTemperatureData(
-			companyIndex,
-			slotNumber,
-			onSuccess: OnAPISuccess,
-			onError: OnAPIError
-		);
-	}
-
-	/// <summary>
 	/// 获取配置错误API错误回调
 	/// </summary>
 	private void OnGetConfigError(string errorMessage)
@@ -807,13 +909,13 @@ public class phoneTableScript : MonoBehaviour
 	// 热力图清零
 	public void ClearTableData()
 	{
-
+		BeginTemperatureCellUpdate();
 		for (int i = 0; i < 3; i++)
 		{
 			for (int j = 0; j < 28; j++)
 			{
-				shangTable.UpdateCell(i, j, 0);
-				xiaTable.UpdateCell(i, j, 0);
+				UpdateTemperatureCell(shangTable, i, j, 0f);
+				UpdateTemperatureCell(xiaTable, i, j, 0f);
 			}
 		}
 
@@ -821,21 +923,24 @@ public class phoneTableScript : MonoBehaviour
 		{
 			for (int j = 0; j < 14; j++)
 			{
-				zhongJianTable.UpdateCell(i, j, 0);
+				UpdateTemperatureCell(zhongJianTable, i, j, 0f);
 			}
 		}
 
 		for (int i = 0; i < 4; i++)
 		{
-			zuoYiTable.UpdateCell(i, 0, 0);
-			youYiTable.UpdateCell(i, 0, 0);			
+			UpdateTemperatureCell(zuoYiTable, i, 0, 0f);
+			UpdateTemperatureCell(youYiTable, i, 0, 0f);
 		}
 
 		for (int i = 0; i < 5; i++)
 		{
-			zuoErTable.UpdateCell(i, 0, 0);
-			youErTable.UpdateCell(i, 0, 0);
+			UpdateTemperatureCell(zuoErTable, i, 0, 0f);
+			UpdateTemperatureCell(youErTable, i, 0, 0f);
 		}
+
+		if (temperatureCellColorRequests.Count > 0)
+			ScheduleTemperatureTextColorRefresh();
 	}
 
 	//关闭折线图

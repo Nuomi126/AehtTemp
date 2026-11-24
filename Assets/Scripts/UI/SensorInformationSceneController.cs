@@ -43,6 +43,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
     private RectTransform heatMapPage;
     private RectTransform heatMapViewport;
     private RectTransform heatMapContent;
+    private RectTransform heatMapLegend;
     private RectTransform temperaturePage;
     private RectTransform categoryBar;
     private RectTransform tableViewport;
@@ -58,6 +59,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
     private Text dataTabText;
     private Text heatMapTabText;
     private Text currentCategoryText;
+    private Text heatMapLegendTitle;
 
     private Button rotateButton;
     private Button dataTabButton;
@@ -78,6 +80,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
     private readonly List<phoneTableScript.TemperatureSensorReading> latestReadings = new();
     private readonly Dictionary<phoneTableScript.TemperatureSensorCategory, Button> categoryButtons = new();
     private readonly Dictionary<phoneTableScript.TemperatureSensorCategory, Text> categoryTexts = new();
+    private readonly List<Text> heatMapLegendLabels = new();
 
     private SensorPage currentPage = SensorPage.HeatMap;
     private phoneTableScript.TemperatureSensorCategory currentCategory = phoneTableScript.TemperatureSensorCategory.Cathode;
@@ -355,6 +358,31 @@ public sealed class SensorInformationSceneController : MonoBehaviour
             legacyHeatMap.anchoredPosition = Vector2.zero;
             legacyHeatMap.localRotation = Quaternion.identity;
         }
+
+        BuildHeatMapLegend();
+    }
+
+    private void BuildHeatMapLegend()
+    {
+        heatMapLegend = CreatePanel("TemperatureLegend", heatMapPage, new Color32(255, 255, 255, 238)).rectTransform;
+        Outline outline = heatMapLegend.gameObject.AddComponent<Outline>();
+        outline.effectColor = new Color32(0, 0, 0, 38);
+        outline.effectDistance = new Vector2(1.5f, -1.5f);
+
+        heatMapLegendTitle = CreateText("Title", heatMapLegend, "数字颜色（℃）", DarkText, 19,
+            FontStyles.Bold, TextAlignmentOptions.Center);
+
+        string[] labels = { "＜50", "50–＜100", "100–＜300", "300–＜350", "350–＜400", "≥400" };
+        float[] samples = { 0f, 50f, 100f, 300f, 350f, 400f };
+        for (int i = 0; i < labels.Length; i++)
+        {
+            Color color = phoneTableScript.GetTemperatureTextColor(samples[i]);
+            Text label = CreateText($"Range{i}", heatMapLegend, $"● {labels[i]}", color, 18,
+                FontStyles.Bold, TextAlignmentOptions.Center);
+            heatMapLegendLabels.Add(label);
+        }
+
+        heatMapLegend.SetAsLastSibling();
     }
 
     private void BuildTemperaturePage()
@@ -908,6 +936,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
         }
 
         UpdateTypography(portrait);
+        LayoutHeatMapLegend(portrait);
         Canvas.ForceUpdateCanvases();
         LayoutHeatMap(portrait, orientationChanged);
 
@@ -923,6 +952,51 @@ public sealed class SensorInformationSceneController : MonoBehaviour
         SetFontSize(landscapePageTitle, portrait ? 30 : 26);
         SetFontSize(dataTabText, portrait ? 32 : 24);
         SetFontSize(heatMapTabText, portrait ? 32 : 24);
+    }
+
+    private void LayoutHeatMapLegend(bool portrait)
+    {
+        if (heatMapViewport == null || heatMapLegend == null)
+            return;
+
+        if (portrait)
+        {
+            SetAnchors(heatMapViewport, new Vector2(0, 0), new Vector2(1, 0.81f));
+            SetAnchors(heatMapLegend, new Vector2(0.02f, 0.825f), new Vector2(0.98f, 0.992f));
+            SetAnchors(heatMapLegendTitle.rectTransform, new Vector2(0, 0.70f), new Vector2(1, 1));
+
+            const int columns = 3;
+            const float itemAreaTop = 0.70f;
+            float itemWidth = 1f / columns;
+            float itemHeight = itemAreaTop / 2f;
+            for (int i = 0; i < heatMapLegendLabels.Count; i++)
+            {
+                int row = i / columns;
+                int column = i % columns;
+                float left = itemWidth * column;
+                float top = itemAreaTop - itemHeight * row;
+                SetAnchors(heatMapLegendLabels[i].rectTransform,
+                    new Vector2(left, top - itemHeight),
+                    new Vector2(left + itemWidth, top));
+                SetFontSize(heatMapLegendLabels[i], 15);
+            }
+            SetFontSize(heatMapLegendTitle, 16);
+        }
+        else
+        {
+            SetAnchors(heatMapViewport, new Vector2(0, 0), new Vector2(0.87f, 1));
+            SetAnchors(heatMapLegend, new Vector2(0.88f, 0.045f), new Vector2(0.992f, 0.955f));
+            SetAnchors(heatMapLegendTitle.rectTransform, new Vector2(0, 0.86f), new Vector2(1, 1));
+
+            float itemHeight = 0.84f / heatMapLegendLabels.Count;
+            for (int i = 0; i < heatMapLegendLabels.Count; i++)
+            {
+                float top = 0.84f - itemHeight * i;
+                SetAnchors(heatMapLegendLabels[i].rectTransform, new Vector2(0, top - itemHeight), new Vector2(1, top));
+                SetFontSize(heatMapLegendLabels[i], 18);
+            }
+            SetFontSize(heatMapLegendTitle, 18);
+        }
     }
 
     private void LayoutHeatMap(bool portrait, bool resetScrollPosition)
