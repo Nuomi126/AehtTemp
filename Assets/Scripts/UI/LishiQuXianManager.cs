@@ -77,7 +77,7 @@ namespace Aeht.UI
             if (slotConfigManager != null) slotConfigManager.OnDataUpdated += OnSlotConfigurationUpdated;
 
             EnsureStatusText();
-            if (!useMockData) historyChart.ClearData();
+            if (!useMockData) ClearHistoryChart();
             if (useMockData) RenderMockData();
             else StartCoroutine(LoadAfterSelectors());
 
@@ -114,6 +114,12 @@ namespace Aeht.UI
         private IEnumerator LoadAfterSelectors()
         {
             yield return null;
+            // Opening this scene directly does not create the global slot
+            // configuration. The selector already supports a work-area
+            // fallback, but its normal startup leaves "无槽号" until invoked.
+            if (slotSelector != null && slotSelector.GetSelectedSlotNumberValue() <= 0 &&
+                workAreaSelector != null)
+                slotSelector.PrepareForWorkArea(workAreaSelector.GetSelectedWorkArea());
             RefreshHistory();
         }
 
@@ -129,7 +135,7 @@ namespace Aeht.UI
             int slot = slotSelector != null ? slotSelector.GetSelectedSlotNumberValue() : -1;
             if (slot <= 0 || slot > ushort.MaxValue)
             {
-                historyChart.ClearData();
+                ClearHistoryChart();
                 ShowStatus("请选择有效槽号");
                 yield break;
             }
@@ -140,14 +146,16 @@ namespace Aeht.UI
             if (!DateTime.TryParseExact(date, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
                     System.Globalization.DateTimeStyles.None, out _))
             {
-                historyChart.ClearData();
+                ClearHistoryChart();
                 ShowStatus("请选择有效日期");
                 yield break;
             }
 
             ShowStatus("正在加载历史曲线…");
-            string enterprise = !string.IsNullOrWhiteSpace(GlobalUserData.AlSerialPantId)
-                ? GlobalUserData.AlSerialPantId.Trim() : companyId;
+            // This scene's configured plant owns its slot list. A login from a
+            // different plant must not silently change the history query.
+            string enterprise = !string.IsNullOrWhiteSpace(companyId)
+                ? companyId.Trim() : GlobalUserData.AlSerialPantId?.Trim();
             string parameter = $"{enterprise}-71-{slot}-{date}";
             using (var request = new UnityWebRequest(apiUrl, "POST"))
             {
@@ -159,12 +167,12 @@ namespace Aeht.UI
 
                 if (request.result != UnityWebRequest.Result.Success)
                 {
-                    historyChart.ClearData();
+                    ClearHistoryChart();
                     ShowStatus($"历史数据请求失败：{request.error}");
                 }
                 else if (!HistoryCurveFrame71.TryParse(request.downloadHandler.text, slot, out var samples))
                 {
-                    historyChart.ClearData();
+                    ClearHistoryChart();
                     ShowStatus("该槽号与日期暂无历史曲线数据");
                 }
                 else
@@ -196,6 +204,15 @@ namespace Aeht.UI
         private void ShowStatus(string message)
         {
             if (statusText != null) statusText.text = message;
+        }
+
+        private void ClearHistoryChart()
+        {
+            historyChart.RemoveData();
+            historyChart.RemoveAllSerie();
+            var legend = historyChart.EnsureChartComponent<Legend>();
+            legend.show = false;
+            historyChart.RefreshChart();
         }
 
         // ==================== 浮动缩放按钮（保证可用） ====================

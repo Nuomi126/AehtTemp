@@ -11,8 +11,8 @@ using UnityEngine.UI;
 
 /// <summary>
 /// Builds the responsive shell for the sensor-information scene at runtime.
-/// The legacy heat-map stays intact and is placed inside a responsive viewport;
-/// the data tab reuses the same readings through phoneTableScript.
+/// The legacy heat-map keeps fetching readings; a compact sensor overlay
+/// presents those readings in the chamber layout used by the reference screen.
 /// </summary>
 public sealed class SensorInformationSceneController : MonoBehaviour
 {
@@ -51,6 +51,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
     private RectTransform tableViewport;
     private RectTransform tableContent;
     private RectTransform legacyHeatMap;
+    private RectTransform sensorOverlay;
     private ScrollRect heatMapScroll;
     private ScrollRect temperatureDataScroll;
 
@@ -87,6 +88,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
     private readonly Dictionary<phoneTableScript.TemperatureSensorCategory, Text> categoryTexts = new();
     private readonly List<Text> heatMapLegendLabels = new();
     private readonly List<RectTransform> heatMapScaleSegments = new();
+    private readonly Dictionary<string, Text> heatMapSensorLabels = new();
 
     private SensorPage currentPage = SensorPage.HeatMap;
     private phoneTableScript.TemperatureSensorCategory currentCategory = phoneTableScript.TemperatureSensorCategory.Cathode;
@@ -340,7 +342,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
         heatMapPage = CreatePanel("HeatMapPage", root, HeatMapBackground).rectTransform;
         heatMapScroll = heatMapPage.gameObject.AddComponent<ScrollRect>();
         heatMapScroll.horizontal = true;
-        heatMapScroll.vertical = true;
+        heatMapScroll.vertical = false;
         heatMapScroll.movementType = ScrollRect.MovementType.Clamped;
         heatMapScroll.inertia = true;
         heatMapScroll.decelerationRate = 0.08f;
@@ -376,13 +378,102 @@ public sealed class SensorInformationSceneController : MonoBehaviour
             legacyHeatMap.pivot = new Vector2(0, 1);
             legacyHeatMap.anchoredPosition = Vector2.zero;
             legacyHeatMap.localRotation = Quaternion.identity;
+            CanvasGroup hiddenLegacy = legacyHeatMap.GetComponent<CanvasGroup>()
+                ?? legacyHeatMap.gameObject.AddComponent<CanvasGroup>();
+            hiddenLegacy.alpha = 0f;
+            hiddenLegacy.interactable = false;
+            hiddenLegacy.blocksRaycasts = false;
         }
+
+        BuildSensorOverlay();
 
         BuildHeatMapLegend();
         heatMapSummary = CreatePanel("HeatMapSummary", heatMapPage, Color.black).rectTransform;
         heatMapSummaryText = CreateText("Summary", heatMapSummary, "测点数据加载中…",
             new Color32(107, 232, 139, 255), 24, FontStyles.Bold, TextAlignmentOptions.Center);
         Stretch(heatMapSummaryText.rectTransform);
+    }
+
+    private void BuildSensorOverlay()
+    {
+        sensorOverlay = CreateRect("VisibleSensorPoints", heatMapContent);
+        Stretch(sensorOverlay);
+
+        // The source has 28 columns per edge. Show 20 evenly spaced real
+        // readings, matching the reference without changing the sensor IDs.
+        for (int column = 0; column < 20; column++)
+        {
+            int node = Mathf.RoundToInt(1f + column * 27f / 19f);
+            float x = 0.135f + column * 0.73f / 19f;
+            AddSensorLabel(1, 2, 0, node, x, 0.865f, 0.042f);
+            AddSensorLabel(4, 2, 2, node, x, 0.785f, 0.042f);
+            AddSensorLabel(4, 2, 1, node, x, 0.705f, 0.042f);
+            AddSensorLabel(4, 1, 1, node, x, 0.295f, 0.042f);
+            AddSensorLabel(4, 1, 2, node, x, 0.215f, 0.042f);
+            AddSensorLabel(1, 1, 0, node, x, 0.135f, 0.042f);
+        }
+
+        int[] middleA = { 1, 5, 11, 17, 23, 27 };
+        int[] middleB = { 2, 6, 12, 18, 24, 28 };
+        for (int i = 0; i < middleA.Length; i++)
+        {
+            float x = 0.21f + i * 0.58f / (middleA.Length - 1);
+            AddSensorLabel(5, 1, 0, middleA[i], x, 0.575f, 0.07f);
+            AddSensorLabel(5, 2, 0, middleB[i], x, 0.425f, 0.07f);
+        }
+
+        for (int i = 0; i < 3; i++)
+        {
+            float y = 0.60f - i * 0.10f;
+            int node = 1 + i * 4;
+            AddSensorLabel(2, 0, 0, node, 0.09f, y, 0.05f);
+            AddSensorLabel(3, 0, 0, node, 0.91f, y, 0.05f);
+        }
+
+        Text inlet = CreateText("Inlet", sensorOverlay, "烟道端", DarkText, 22,
+            FontStyles.Bold, TextAlignmentOptions.Center);
+        SetAnchors(inlet.rectTransform, new Vector2(0.01f, 0.43f), new Vector2(0.05f, 0.57f));
+        Text outlet = CreateText("Outlet", sensorOverlay, "出铝端", DarkText, 22,
+            FontStyles.Bold, TextAlignmentOptions.Center);
+        SetAnchors(outlet.rectTransform, new Vector2(0.95f, 0.43f), new Vector2(0.99f, 0.57f));
+    }
+
+    private void AddSensorLabel(int position, int direction, int index, int node,
+        float centerX, float centerY, float width)
+    {
+        string key = SensorKey(position, direction, index, node);
+        Text label = CreateText(key, sensorOverlay, string.Empty, DarkText, 20,
+            FontStyles.Bold, TextAlignmentOptions.Center);
+        label.supportRichText = true;
+        SetAnchors(label.rectTransform,
+            new Vector2(centerX - width / 2f, centerY - 0.036f),
+            new Vector2(centerX + width / 2f, centerY + 0.036f));
+        heatMapSensorLabels.Add(key, label);
+    }
+
+    private static string SensorKey(int position, int direction, int index, int node) =>
+        $"{position}:{direction}:{index}:{node}";
+
+    private void UpdateSensorOverlay()
+    {
+        if (sensorOverlay == null) return;
+        var readingsByKey = new Dictionary<string, phoneTableScript.TemperatureSensorReading>();
+        foreach (var reading in latestReadings)
+            readingsByKey[SensorKey(reading.positionIndex, reading.directionType,
+                reading.directionIndex, reading.nodeIndex)] = reading;
+        int nameSize = Mathf.RoundToInt(Mathf.Clamp(heatMapContent.rect.width / 100f, 18f, 26f));
+        foreach (var pair in heatMapSensorLabels)
+        {
+            if (!readingsByKey.TryGetValue(pair.Key, out var reading))
+            {
+                pair.Value.text = string.Empty;
+                continue;
+            }
+            string value = float.IsNaN(reading.temperature) || float.IsInfinity(reading.temperature)
+                ? "--" : $"{reading.temperature:0}";
+            string valueColor = reading.temperature >= 400f ? "#D32F2F" : "#171717";
+            pair.Value.text = $"<size={nameSize}>{reading.displayName}</size>\n<color={valueColor}>{value}</color>";
+        }
     }
 
     private void BuildHeatMapLegend()
@@ -704,10 +795,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
     {
         showPointLabels = !showPointLabels;
         pointToggleText.text = showPointLabels ? "☑ 显示测点" : "□ 显示测点";
-        if (legacyHeatMap == null) return;
-        foreach (Transform child in legacyHeatMap.GetComponentsInChildren<Transform>(true))
-            if (child.name.EndsWith("UITable-pos", StringComparison.OrdinalIgnoreCase))
-                child.gameObject.SetActive(showPointLabels);
+        if (sensorOverlay != null) sensorOverlay.gameObject.SetActive(showPointLabels);
     }
 
     private void ReturnToMainScene()
@@ -786,6 +874,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
             heatMapSummaryText.text = values.Count == 0 ? "暂无测点温度数据"
                 : $"测点 {values.Count}    平均温度 {values.Average():0} ℃    最高温度 {values.Max():0} ℃";
         }
+        UpdateSensorOverlay();
         RebuildTemperatureTable();
     }
 
@@ -1049,35 +1138,21 @@ public sealed class SensorInformationSceneController : MonoBehaviour
 
     private void LayoutHeatMap(bool portrait, bool resetScrollPosition)
     {
-        if (legacyHeatMap == null || heatMapViewport == null)
+        if (heatMapViewport == null)
             return;
-
-        float sourceWidth = Mathf.Max(1, legacyHeatMap.sizeDelta.x);
-        float sourceHeight = Mathf.Max(1, legacyHeatMap.sizeDelta.y);
-        if (sourceWidth < 100) sourceWidth = 2160;
-        if (sourceHeight < 100) sourceHeight = 1000;
-
-        float fitWidth = heatMapViewport.rect.width / sourceWidth;
-        float fitHeight = heatMapViewport.rect.height / sourceHeight;
-        float scale;
-        if (portrait)
-        {
-            // Leave a modest horizontal crop for readability without the
-            // excessive fixed portrait enlargement used previously.
-            scale = Mathf.Clamp(fitWidth * 1.35f, 0.75f, 1.55f);
-        }
-        else
-        {
-            scale = Mathf.Min(fitWidth, fitHeight);
-            scale = Mathf.Max(0.1f, scale);
-        }
-
-        legacyHeatMap.sizeDelta = new Vector2(sourceWidth, sourceHeight);
-        legacyHeatMap.localScale = Vector3.one * scale;
-        legacyHeatMap.anchoredPosition = Vector2.zero;
-
-        heatMapContent.sizeDelta = new Vector2(sourceWidth * scale, sourceHeight * scale);
+        float width = portrait ? Mathf.Max(1200f, heatMapViewport.rect.width) : heatMapViewport.rect.width;
+        float height = Mathf.Max(1f, heatMapViewport.rect.height);
+        heatMapContent.sizeDelta = new Vector2(width, height);
         heatMapContent.anchoredPosition = Vector2.zero;
+        heatMapScroll.horizontal = width > heatMapViewport.rect.width + 1f;
+        if (legacyHeatMap != null)
+        {
+            legacyHeatMap.localScale = Vector3.one;
+            legacyHeatMap.anchoredPosition = Vector2.zero;
+        }
+        foreach (Text label in heatMapSensorLabels.Values)
+            SetFontSize(label, Mathf.Clamp(width / 70f, 27f, 38f));
+        UpdateSensorOverlay();
 
         if (resetScrollPosition && heatMapScroll != null)
         {
