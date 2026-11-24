@@ -31,7 +31,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
     private static readonly Color PageBackground = new Color32(242, 243, 244, 255);
     private static readonly Color TableHeader = new Color32(218, 239, 232, 255);
     private static readonly Color TableAlternate = new Color32(235, 247, 243, 255);
-    private static readonly Color HeatMapBackground = new Color32(0, 96, 139, 255);
+    private static readonly Color HeatMapBackground = new Color32(8, 10, 12, 255);
 
     private Canvas sceneCanvas;
     private CanvasGroup loadingCurtain;
@@ -44,6 +44,8 @@ public sealed class SensorInformationSceneController : MonoBehaviour
     private RectTransform heatMapViewport;
     private RectTransform heatMapContent;
     private RectTransform heatMapLegend;
+    private RectTransform heatMapScale;
+    private RectTransform heatMapSummary;
     private RectTransform temperaturePage;
     private RectTransform categoryBar;
     private RectTransform tableViewport;
@@ -60,6 +62,8 @@ public sealed class SensorInformationSceneController : MonoBehaviour
     private Text heatMapTabText;
     private Text currentCategoryText;
     private Text heatMapLegendTitle;
+    private Text heatMapSummaryText;
+    private Text pointToggleText;
 
     private Button rotateButton;
     private Button dataTabButton;
@@ -67,6 +71,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
     private Button currentCategoryButton;
     private Button sideDataButton;
     private Button sideHeatMapButton;
+    private Button pointToggleButton;
 
     private Image dataUnderline;
     private Image heatMapUnderline;
@@ -81,12 +86,14 @@ public sealed class SensorInformationSceneController : MonoBehaviour
     private readonly Dictionary<phoneTableScript.TemperatureSensorCategory, Button> categoryButtons = new();
     private readonly Dictionary<phoneTableScript.TemperatureSensorCategory, Text> categoryTexts = new();
     private readonly List<Text> heatMapLegendLabels = new();
+    private readonly List<RectTransform> heatMapScaleSegments = new();
 
     private SensorPage currentPage = SensorPage.HeatMap;
     private phoneTableScript.TemperatureSensorCategory currentCategory = phoneTableScript.TemperatureSensorCategory.Cathode;
     private bool lastPortrait;
     private Vector2 lastCanvasSize;
     private bool isBuilt;
+    private bool showPointLabels = true;
 
     [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
     private static void RegisterSceneHook()
@@ -310,11 +317,15 @@ public sealed class SensorInformationSceneController : MonoBehaviour
 
         rotateButton = CreateButton("Rotate", controls, "↗", Color.clear, Green, ToggleOrientation);
         landscapePageTitle = CreateText("LandscapeTitle", controls, "温度热力图", Green, 30, FontStyles.Bold, TextAlignmentOptions.Center);
+        pointToggleButton = CreateButton("PointLabels", controls, string.Empty, Color.clear, DarkText, TogglePointLabels);
+        pointToggleText = CreateText("Label", pointToggleButton.transform, "☑ 显示测点", DarkText, 22,
+            FontStyles.Normal, TextAlignmentOptions.Center);
+        Stretch(pointToggleText.rectTransform);
     }
 
     private void BuildSideRail()
     {
-        sideRail = CreatePanel("LandscapeSideRail", root, Green).rectTransform;
+        sideRail = CreatePanel("LandscapeSideRail", root, new Color32(28, 31, 33, 255)).rectTransform;
         sideDataButton = CreateButton("Data", sideRail, "数", Color.clear, Color.white, () => ShowPage(SensorPage.TemperatureData));
         sideHeatMapButton = CreateButton("HeatMap", sideRail, "热", Color.clear, Color.white, () => ShowPage(SensorPage.HeatMap));
         Button backButton = CreateButton("Back", sideRail, "返", Color.clear, Color.white, ReturnToMainScene);
@@ -344,6 +355,14 @@ public sealed class SensorInformationSceneController : MonoBehaviour
         heatMapContent.anchorMax = new Vector2(0, 1);
         heatMapContent.pivot = new Vector2(0, 1);
 
+        Image whiteCanvas = CreatePanel("ChamberCanvas", heatMapContent, Color.white);
+        Stretch(whiteCanvas.rectTransform);
+        SensorPotGraphic pot = new GameObject("ChamberOutline", typeof(RectTransform),
+            typeof(CanvasRenderer), typeof(SensorPotGraphic)).GetComponent<SensorPotGraphic>();
+        pot.transform.SetParent(heatMapContent, false);
+        pot.raycastTarget = false;
+        Stretch((RectTransform)pot.transform);
+
         heatMapScroll.viewport = heatMapViewport;
         heatMapScroll.content = heatMapContent;
 
@@ -360,25 +379,36 @@ public sealed class SensorInformationSceneController : MonoBehaviour
         }
 
         BuildHeatMapLegend();
+        heatMapSummary = CreatePanel("HeatMapSummary", heatMapPage, Color.black).rectTransform;
+        heatMapSummaryText = CreateText("Summary", heatMapSummary, "测点数据加载中…",
+            new Color32(107, 232, 139, 255), 24, FontStyles.Bold, TextAlignmentOptions.Center);
+        Stretch(heatMapSummaryText.rectTransform);
     }
 
     private void BuildHeatMapLegend()
     {
-        heatMapLegend = CreatePanel("TemperatureLegend", heatMapPage, new Color32(255, 255, 255, 238)).rectTransform;
-        Outline outline = heatMapLegend.gameObject.AddComponent<Outline>();
-        outline.effectColor = new Color32(0, 0, 0, 38);
-        outline.effectDistance = new Vector2(1.5f, -1.5f);
-
-        heatMapLegendTitle = CreateText("Title", heatMapLegend, "数字颜色（℃）", DarkText, 19,
+        heatMapLegend = CreatePanel("TemperatureLegend", heatMapPage, Color.white).rectTransform;
+        heatMapLegendTitle = CreateText("Title", heatMapLegend, "温度 ℃", DarkText, 19,
             FontStyles.Bold, TextAlignmentOptions.Center);
 
-        string[] labels = { "＜50", "50–＜100", "100–＜300", "300–＜350", "350–＜400", "≥400" };
-        float[] samples = { 0f, 50f, 100f, 300f, 350f, 400f };
-        for (int i = 0; i < labels.Length; i++)
+        heatMapScale = CreateRect("ColorScale", heatMapLegend);
+        for (int i = 0; i < 35; i++)
         {
-            Color color = phoneTableScript.GetTemperatureTextColor(samples[i]);
-            Text label = CreateText($"Range{i}", heatMapLegend, $"● {labels[i]}", color, 18,
-                FontStyles.Bold, TextAlignmentOptions.Center);
+            float low = i / 35f;
+            float high = (i + 1) / 35f;
+            Color color = Color.Lerp(new Color32(20, 58, 204, 255), new Color32(27, 182, 38, 255), Mathf.Clamp01(low * 2f));
+            if (low >= 0.5f) color = Color.Lerp(new Color32(27, 182, 38, 255), new Color32(251, 233, 15, 255), (low - 0.5f) * 2f);
+            if (low >= 0.72f) color = Color.Lerp(new Color32(251, 233, 15, 255), new Color32(237, 37, 23, 255), (low - 0.72f) / 0.28f);
+            Image segment = CreatePanel($"Segment{i}", heatMapScale, color);
+            SetAnchors(segment.rectTransform, new Vector2(0, low), new Vector2(1, high));
+            heatMapScaleSegments.Add(segment.rectTransform);
+        }
+
+        string[] ticks = { "50", "100", "150", "200", "250", "300", "350", "400" };
+        for (int i = 0; i < ticks.Length; i++)
+        {
+            Text label = CreateText($"Tick{i}", heatMapLegend, ticks[i], DarkText, 18,
+                FontStyles.Bold, TextAlignmentOptions.MidlineLeft);
             heatMapLegendLabels.Add(label);
         }
 
@@ -670,6 +700,16 @@ public sealed class SensorInformationSceneController : MonoBehaviour
             slotText.text = slotNumberSelector.GetSelectedSlotNumber();
     }
 
+    private void TogglePointLabels()
+    {
+        showPointLabels = !showPointLabels;
+        pointToggleText.text = showPointLabels ? "☑ 显示测点" : "□ 显示测点";
+        if (legacyHeatMap == null) return;
+        foreach (Transform child in legacyHeatMap.GetComponentsInChildren<Transform>(true))
+            if (child.name.EndsWith("UITable-pos", StringComparison.OrdinalIgnoreCase))
+                child.gameObject.SetActive(showPointLabels);
+    }
+
     private void ReturnToMainScene()
     {
         SceneLoader.currentSelectedScene = "MainScene";
@@ -739,6 +779,13 @@ public sealed class SensorInformationSceneController : MonoBehaviour
         latestReadings.Clear();
         if (readings != null)
             latestReadings.AddRange(readings);
+        if (heatMapSummaryText != null)
+        {
+            var values = latestReadings.Select(r => r.temperature)
+                .Where(value => !float.IsNaN(value) && !float.IsInfinity(value)).ToList();
+            heatMapSummaryText.text = values.Count == 0 ? "暂无测点温度数据"
+                : $"测点 {values.Count}    平均温度 {values.Average():0} ℃    最高温度 {values.Max():0} ℃";
+        }
         RebuildTemperatureTable();
     }
 
@@ -901,6 +948,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
 
             bool showRotate = currentPage == SensorPage.HeatMap;
             rotateButton.gameObject.SetActive(showRotate);
+            pointToggleButton.gameObject.SetActive(false);
             landscapePageTitle.gameObject.SetActive(false);
             if (showRotate)
             {
@@ -926,9 +974,11 @@ public sealed class SensorInformationSceneController : MonoBehaviour
 
             landscapePageTitle.gameObject.SetActive(true);
             rotateButton.gameObject.SetActive(true);
+            pointToggleButton.gameObject.SetActive(currentPage == SensorPage.HeatMap);
             SetAnchors(FindRect(controls, "WorkArea"), new Vector2(0.02f, 0.15f), new Vector2(0.20f, 0.85f));
             SetAnchors(FindRect(controls, "SlotSelector"), new Vector2(0.215f, 0.15f), new Vector2(0.38f, 0.85f));
             SetAnchors(landscapePageTitle.rectTransform, new Vector2(0.40f, 0), new Vector2(0.72f, 1));
+            SetAnchors((RectTransform)pointToggleButton.transform, new Vector2(0.73f, 0.10f), new Vector2(0.91f, 0.90f));
             SetAnchors((RectTransform)rotateButton.transform, new Vector2(0.92f, 0.12f), new Vector2(0.985f, 0.88f));
 
             SetAnchors(categoryBar, new Vector2(0.02f, 0.89f), new Vector2(0.54f, 0.99f));
@@ -952,6 +1002,7 @@ public sealed class SensorInformationSceneController : MonoBehaviour
         SetFontSize(landscapePageTitle, portrait ? 30 : 26);
         SetFontSize(dataTabText, portrait ? 32 : 24);
         SetFontSize(heatMapTabText, portrait ? 32 : 24);
+        SetFontSize(heatMapSummaryText, portrait ? 20 : 24);
     }
 
     private void LayoutHeatMapLegend(bool portrait)
@@ -961,41 +1012,38 @@ public sealed class SensorInformationSceneController : MonoBehaviour
 
         if (portrait)
         {
-            SetAnchors(heatMapViewport, new Vector2(0, 0), new Vector2(1, 0.81f));
-            SetAnchors(heatMapLegend, new Vector2(0.02f, 0.825f), new Vector2(0.98f, 0.992f));
-            SetAnchors(heatMapLegendTitle.rectTransform, new Vector2(0, 0.70f), new Vector2(1, 1));
-
-            const int columns = 3;
-            const float itemAreaTop = 0.70f;
-            float itemWidth = 1f / columns;
-            float itemHeight = itemAreaTop / 2f;
+            SetAnchors(heatMapViewport, new Vector2(0, 0.06f), new Vector2(1, 0.88f));
+            SetAnchors(heatMapLegend, new Vector2(0.08f, 0.89f), new Vector2(0.92f, 0.995f));
+            SetAnchors(heatMapSummary, new Vector2(0, 0), new Vector2(1, 0.06f));
+            SetAnchors(heatMapLegendTitle.rectTransform, new Vector2(0, 0.62f), Vector2.one);
+            SetAnchors(heatMapScale, new Vector2(0.03f, 0.34f), new Vector2(0.97f, 0.55f));
+            for (int i = 0; i < heatMapScaleSegments.Count; i++)
+                SetAnchors(heatMapScaleSegments[i], new Vector2(i / 35f, 0), new Vector2((i + 1) / 35f, 1));
             for (int i = 0; i < heatMapLegendLabels.Count; i++)
             {
-                int row = i / columns;
-                int column = i % columns;
-                float left = itemWidth * column;
-                float top = itemAreaTop - itemHeight * row;
+                float left = 0.03f + i * 0.94f / 8f;
                 SetAnchors(heatMapLegendLabels[i].rectTransform,
-                    new Vector2(left, top - itemHeight),
-                    new Vector2(left + itemWidth, top));
-                SetFontSize(heatMapLegendLabels[i], 15);
+                    new Vector2(left, 0.02f), new Vector2(left + 0.94f / 8f, 0.32f));
+                SetFontSize(heatMapLegendLabels[i], 14);
             }
-            SetFontSize(heatMapLegendTitle, 16);
         }
         else
         {
-            SetAnchors(heatMapViewport, new Vector2(0, 0), new Vector2(0.87f, 1));
-            SetAnchors(heatMapLegend, new Vector2(0.88f, 0.045f), new Vector2(0.992f, 0.955f));
-            SetAnchors(heatMapLegendTitle.rectTransform, new Vector2(0, 0.86f), new Vector2(1, 1));
-
-            float itemHeight = 0.84f / heatMapLegendLabels.Count;
+            SetAnchors(heatMapViewport, new Vector2(0.02f, 0.06f), new Vector2(0.91f, 0.98f));
+            SetAnchors(heatMapLegend, new Vector2(0.915f, 0.06f), new Vector2(0.995f, 0.98f));
+            SetAnchors(heatMapSummary, new Vector2(0, 0), new Vector2(1, 0.06f));
+            SetAnchors(heatMapLegendTitle.rectTransform, new Vector2(0, 0.92f), Vector2.one);
+            SetAnchors(heatMapScale, new Vector2(0.08f, 0.035f), new Vector2(0.29f, 0.91f));
+            for (int i = 0; i < heatMapScaleSegments.Count; i++)
+                SetAnchors(heatMapScaleSegments[i], new Vector2(0, i / 35f), new Vector2(1, (i + 1) / 35f));
+            float itemHeight = 0.875f / heatMapLegendLabels.Count;
             for (int i = 0; i < heatMapLegendLabels.Count; i++)
             {
-                float top = 0.84f - itemHeight * i;
-                SetAnchors(heatMapLegendLabels[i].rectTransform, new Vector2(0, top - itemHeight), new Vector2(1, top));
-                SetFontSize(heatMapLegendLabels[i], 18);
+                float bottom = 0.035f + itemHeight * i;
+                SetAnchors(heatMapLegendLabels[i].rectTransform, new Vector2(0.38f, bottom), new Vector2(1, bottom + itemHeight));
+                SetFontSize(heatMapLegendLabels[i], 16);
             }
-            SetFontSize(heatMapLegendTitle, 18);
+            SetFontSize(heatMapLegendTitle, 17);
         }
     }
 

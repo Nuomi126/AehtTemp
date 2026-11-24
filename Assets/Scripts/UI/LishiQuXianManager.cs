@@ -2,8 +2,10 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using TMPro;
 using UnityEngine;
+using UnityEngine.Networking;
 using UnityEngine.UI;
 using XCharts.Runtime;
 using XUGL;
@@ -11,7 +13,7 @@ using XUGL;
 namespace Aeht.UI
 {
     /// <summary>
-    /// 历史曲线 Manager：在一个大 LineChart 中绘制多条曲线（双 Y 轴 + Line/Scatter/Bar 混合）
+    /// 历史曲线：查询 Frame 71 并按旧版的电压、电流、下料和作业状态绘图。
     /// </summary>
     public class LishiQuXianManager : MonoBehaviour
     {
@@ -23,8 +25,19 @@ namespace Aeht.UI
         [Header("字体")]
         [SerializeField] private TMP_FontAsset chineseFontAsset;
 
-        [Header("模拟数据")]
-        [SerializeField] private bool useMockData = true;
+        [Header("历史数据")]
+        [SerializeField] private string apiUrl = "http://183.214.222.76:9000/api/Home/GetRemoteDataFromAlwit";
+        [SerializeField] private string companyId = "1033";
+        [SerializeField] private int requestTimeoutSeconds = 30;
+        [SerializeField] private riqSelector dateSelector;
+        [SerializeField] private SlotNumberSelector slotSelector;
+        [SerializeField] private WorkAreaSelector workAreaSelector;
+        [SerializeField] private bool useMockData = false;
+
+        private Coroutine loadRoutine;
+        private Coroutine filterRoutine;
+        private TextMeshProUGUI statusText;
+        private GlobalElectrolyticCellDataManager slotConfigManager;
 
         // 整图缩放/拖拽状态（Update 中处理）
         [Header("整图缩放")]
@@ -54,11 +67,135 @@ namespace Aeht.UI
                 return;
             }
 
-            if (useMockData)
-                RenderMockData();
+            dateSelector = dateSelector != null ? dateSelector : FindObjectOfType<riqSelector>();
+            slotSelector = slotSelector != null ? slotSelector : FindObjectOfType<SlotNumberSelector>();
+            workAreaSelector = workAreaSelector != null ? workAreaSelector : FindObjectOfType<WorkAreaSelector>();
+            if (dateSelector != null && dateSelector.OnDateConfirmed != null) dateSelector.OnDateConfirmed.AddListener(OnFilterChanged);
+            if (slotSelector != null && slotSelector.OnSlotConfirmed != null) slotSelector.OnSlotConfirmed.AddListener(OnFilterChanged);
+            if (workAreaSelector != null && workAreaSelector.OnWorkAreaConfirmedEvent != null) workAreaSelector.OnWorkAreaConfirmedEvent.AddListener(OnFilterChanged);
+            slotConfigManager = GlobalElectrolyticCellDataManager.Instance;
+            if (slotConfigManager != null) slotConfigManager.OnDataUpdated += OnSlotConfigurationUpdated;
+
+            EnsureStatusText();
+            if (!useMockData) historyChart.ClearData();
+            if (useMockData) RenderMockData();
+            else StartCoroutine(LoadAfterSelectors());
 
             // 创建右下角浮动缩放按钮（不依赖鼠标焦点，UGUI 按钮 100% 可靠）
             EnsureZoomControls();
+        }
+
+        private void OnDestroy()
+        {
+            if (dateSelector != null && dateSelector.OnDateConfirmed != null) dateSelector.OnDateConfirmed.RemoveListener(OnFilterChanged);
+            if (slotSelector != null && slotSelector.OnSlotConfirmed != null) slotSelector.OnSlotConfirmed.RemoveListener(OnFilterChanged);
+            if (workAreaSelector != null && workAreaSelector.OnWorkAreaConfirmedEvent != null) workAreaSelector.OnWorkAreaConfirmedEvent.RemoveListener(OnFilterChanged);
+            if (slotConfigManager != null) slotConfigManager.OnDataUpdated -= OnSlotConfigurationUpdated;
+        }
+
+        private void OnFilterChanged(string _) => ScheduleRefresh();
+
+        private void OnSlotConfigurationUpdated() => ScheduleRefresh();
+
+        private void ScheduleRefresh()
+        {
+            if (!isActiveAndEnabled || useMockData) return;
+            if (filterRoutine != null) StopCoroutine(filterRoutine);
+            filterRoutine = StartCoroutine(RefreshAfterFilterFrame());
+        }
+
+        private IEnumerator RefreshAfterFilterFrame()
+        {
+            yield return null; // allow work-area selection to update the slot selector
+            filterRoutine = null;
+            RefreshHistory();
+        }
+
+        private IEnumerator LoadAfterSelectors()
+        {
+            yield return null;
+            RefreshHistory();
+        }
+
+        public void RefreshHistory()
+        {
+            if (!isActiveAndEnabled || useMockData || historyChart == null) return;
+            if (loadRoutine != null) StopCoroutine(loadRoutine);
+            loadRoutine = StartCoroutine(FetchHistory());
+        }
+
+        private IEnumerator FetchHistory()
+        {
+            int slot = slotSelector != null ? slotSelector.GetSelectedSlotNumberValue() : -1;
+            if (slot <= 0 || slot > ushort.MaxValue)
+            {
+                historyChart.ClearData();
+                ShowStatus("请选择有效槽号");
+                yield break;
+            }
+
+            string date = dateSelector != null && dateSelector.selectedDisplayText != null
+                ? dateSelector.selectedDisplayText.text.Trim().Replace("-", "").Replace("/", "")
+                : DateTime.Today.ToString("yyyyMMdd");
+            if (!DateTime.TryParseExact(date, "yyyyMMdd", System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out _))
+            {
+                historyChart.ClearData();
+                ShowStatus("请选择有效日期");
+                yield break;
+            }
+
+            ShowStatus("正在加载历史曲线…");
+            string enterprise = !string.IsNullOrWhiteSpace(GlobalUserData.AlSerialPantId)
+                ? GlobalUserData.AlSerialPantId.Trim() : companyId;
+            string parameter = $"{enterprise}-71-{slot}-{date}";
+            using (var request = new UnityWebRequest(apiUrl, "POST"))
+            {
+                request.uploadHandler = new UploadHandlerRaw(Encoding.UTF8.GetBytes($"\"{parameter}\""));
+                request.downloadHandler = new DownloadHandlerBuffer();
+                request.SetRequestHeader("Content-Type", "application/json");
+                request.timeout = requestTimeoutSeconds;
+                yield return request.SendWebRequest();
+
+                if (request.result != UnityWebRequest.Result.Success)
+                {
+                    historyChart.ClearData();
+                    ShowStatus($"历史数据请求失败：{request.error}");
+                }
+                else if (!HistoryCurveFrame71.TryParse(request.downloadHandler.text, slot, out var samples))
+                {
+                    historyChart.ClearData();
+                    ShowStatus("该槽号与日期暂无历史曲线数据");
+                }
+                else
+                {
+                    RenderHistory(samples);
+                    ShowStatus(string.Empty);
+                }
+            }
+            loadRoutine = null;
+        }
+
+        private void EnsureStatusText()
+        {
+            if (chartContainer == null) return;
+            var go = new GameObject("HistoryDataStatus", typeof(RectTransform), typeof(TextMeshProUGUI));
+            go.transform.SetParent(chartContainer, false);
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = new Vector2(0.20f, 0.42f);
+            rect.anchorMax = new Vector2(0.80f, 0.58f);
+            rect.offsetMin = rect.offsetMax = Vector2.zero;
+            statusText = go.GetComponent<TextMeshProUGUI>();
+            statusText.font = chineseFontAsset;
+            statusText.fontSize = 26;
+            statusText.alignment = TextAlignmentOptions.Center;
+            statusText.color = Color.white;
+            statusText.raycastTarget = false;
+        }
+
+        private void ShowStatus(string message)
+        {
+            if (statusText != null) statusText.text = message;
         }
 
         // ==================== 浮动缩放按钮（保证可用） ====================
@@ -139,6 +276,165 @@ namespace Aeht.UI
             text.fontSize = 28;
             text.fontStyle = FontStyle.Bold;
             text.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
+        }
+
+        // The Java version uses 720 two-minute positions, with gaps where a
+        // sample was not recorded. Keep that scale so the date and event flags
+        // line up with the original chart.
+        private void RenderHistory(List<HistoryCurveFrame71.Sample> samples)
+        {
+            var byIndex = new Dictionary<int, HistoryCurveFrame71.Sample>();
+            foreach (var sample in samples) byIndex[sample.recordIndex] = sample;
+
+            var chart = historyChart;
+            chart.RemoveData();
+            chart.RemoveAllSerie();
+            chart.RemoveChartComponents<YAxis>();
+            chart.RemoveChartComponents<GridCoord>();
+            chart.RemoveChartComponents<Legend>();
+
+            var legend = chart.EnsureChartComponent<Legend>();
+            legend.show = true;
+            legend.location.align = Location.Align.TopCenter;
+            legend.location.top = 0.01f;
+            legend.orient = Orient.Horizonal;
+            legend.selectedMode = Legend.SelectedMode.Multiple;
+            legend.data = new List<string> { "工作电压", "电压上限", "电压下限", "系列电流", "实际下料", "基准下料", "作业状态" };
+            legend.labelStyle.textStyle.color = Color.white;
+            legend.labelStyle.textStyle.fontSize = 13;
+            ApplyFont(legend.labelStyle.textStyle);
+
+            var grid = chart.EnsureChartComponent<GridCoord>();
+            grid.show = true;
+            grid.left = 60;
+            grid.right = 65;
+            grid.top = 68;
+            grid.bottom = 65;
+            grid.borderWidth = 1f;
+            grid.borderColor = new Color32(130, 130, 130, 160);
+
+            var xAxis = chart.EnsureChartComponent<XAxis>();
+            xAxis.show = true;
+            xAxis.type = Axis.AxisType.Category;
+            xAxis.boundaryGap = false;
+            xAxis.axisLabel.show = true;
+            xAxis.axisLabel.interval = 59;
+            xAxis.axisLabel.textStyle.color = Color.white;
+            xAxis.axisLabel.textStyle.fontSize = 13;
+            ApplyFont(xAxis.axisLabel.textStyle);
+            xAxis.splitLine.show = true;
+            xAxis.splitLine.interval = 59;
+
+            float average = (float)samples.Average(s => s.voltage);
+            float voltageMin = Mathf.Floor((average - 600f) / 100f) * 100f;
+            float voltageMax = voltageMin + 1000f;
+            var leftAxis = chart.EnsureChartComponent<YAxis>();
+            leftAxis.show = true;
+            leftAxis.type = Axis.AxisType.Value;
+            leftAxis.minMaxType = Axis.AxisMinMaxType.Custom;
+            leftAxis.min = voltageMin;
+            leftAxis.max = voltageMax;
+            leftAxis.splitNumber = 10;
+            leftAxis.axisLabel.show = true;
+            leftAxis.axisLabel.textStyle.color = Color.white;
+            ApplyFont(leftAxis.axisLabel.textStyle);
+
+            var rightAxis = chart.AddChartComponent<YAxis>();
+            rightAxis.show = true;
+            rightAxis.type = Axis.AxisType.Value;
+            rightAxis.minMaxType = Axis.AxisMinMaxType.Custom;
+            rightAxis.min = 0;
+            float maxSecondary = samples.Max(s => Mathf.Max(s.seriesCurrent / 10f,
+                Mathf.Max(s.actualFeedingInterval, s.baseFeedingInterval)));
+            rightAxis.max = Mathf.Ceil(Mathf.Max(50f, maxSecondary + 50f) / 50f) * 50f;
+            rightAxis.splitNumber = 5;
+            rightAxis.position = Axis.AxisPosition.Right;
+            rightAxis.axisLabel.show = true;
+            rightAxis.axisLabel.textStyle.color = Color.white;
+            ApplyFont(rightAxis.axisLabel.textStyle);
+
+            AddHistoryLine(chart, "工作电压", 0, new Color32(255, 90, 105, 255), 2f);
+            AddHistoryLine(chart, "电压上限", 0, new Color32(255, 188, 64, 255), 1f);
+            AddHistoryLine(chart, "电压下限", 0, new Color32(255, 188, 64, 255), 1f);
+            AddHistoryLine(chart, "系列电流", 1, new Color32(86, 205, 255, 255), 1.5f);
+            AddHistoryLine(chart, "实际下料", 1, new Color32(175, 124, 255, 255), 1.5f);
+            AddHistoryLine(chart, "基准下料", 1, new Color32(128, 224, 129, 255), 1f);
+            var events = chart.AddSerie<Scatter>("作业状态");
+            events.yAxisIndex = 0;
+            events.symbol.show = false;
+            events.animation.enable = false;
+
+            uint lastSpecial = 0, lastFeeding = 0, lastAnode = 0;
+            for (int record = 1; record <= 720; record++)
+            {
+                int minutes = (record - 1) * 2;
+                chart.AddXAxisData($"{minutes / 60:D2}:{minutes % 60:D2}");
+                if (!byIndex.TryGetValue(record, out var sample))
+                {
+                    for (int series = 0; series < 7; series++) chart.AddData(series, 0).ignore = true;
+                    continue;
+                }
+
+                chart.AddData(0, sample.voltage);
+                chart.AddData(1, sample.voltageUpper);
+                chart.AddData(2, sample.voltageLower);
+                chart.AddData(3, sample.seriesCurrent / 10f);
+                chart.AddData(4, sample.actualFeedingInterval);
+                chart.AddData(5, sample.baseFeedingInterval);
+
+                string eventLabel = GetEventLabel(sample, lastSpecial, lastFeeding, lastAnode);
+                lastSpecial = sample.specialState;
+                lastFeeding = sample.feedingState;
+                lastAnode = sample.anodeMoveState;
+                if (eventLabel.Length == 0) chart.AddData(6, 0).ignore = true;
+                else
+                {
+                    var point = chart.AddData(6, voltageMin + 80f);
+                    var label = point.EnsureComponent<LabelStyle>();
+                    label.show = true;
+                    label.formatter = eventLabel;
+                    label.textStyle.color = new Color32(116, 235, 150, 255);
+                    label.textStyle.fontSize = 11;
+                    ApplyFont(label.textStyle);
+                }
+            }
+            xAxis.SetAllDirty();
+            chart.onDrawAfterSerie = null;
+            chart.RefreshChart();
+        }
+
+        private static string GetEventLabel(HistoryCurveFrame71.Sample sample,
+            uint previousSpecial, uint previousFeeding, uint previousAnode)
+        {
+            // Bit meanings follow hiscurvetools.js: special, feeding, anode move.
+            uint special = sample.specialState & ~previousSpecial;
+            uint feeding = sample.feedingState & ~previousFeeding;
+            uint anode = sample.anodeMoveState & ~previousAnode;
+            if ((special & 1) != 0) return "AE";
+            if ((special & 2) != 0) return "出铝";
+            if ((special & 4) != 0) return "换极";
+            if ((special & 16) != 0) return "母线";
+            if ((special & 32) != 0) return "手动";
+            if ((feeding & 2) != 0) return "AEB";
+            if ((feeding & 1) != 0) return "(AEB)";
+            if ((feeding & 32) != 0) return "AlF";
+            if ((feeding & 16) != 0) return "(AlF)";
+            if ((anode & 2) != 0) return "自动↑";
+            if ((anode & 1) != 0) return "手动↑";
+            if ((anode & 8) != 0) return "自动↓";
+            if ((anode & 4) != 0) return "手动↓";
+            return string.Empty;
+        }
+
+        private static void AddHistoryLine(LineChart chart, string title, int axis, Color color, float width)
+        {
+            var series = chart.AddSerie<Line>(title);
+            series.yAxisIndex = axis;
+            series.lineStyle.width = width;
+            series.lineStyle.color = color;
+            series.itemStyle.color = color;
+            series.symbol.show = false;
+            series.animation.enable = false;
         }
 
         // ==================== 模拟数据 ====================

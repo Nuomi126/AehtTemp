@@ -4156,7 +4156,13 @@ MonoBehaviour:
   chartContainer: {fileID: 2032804815}
   chartPrefab: {fileID: 1925259705892663582, guid: 400c803b675a3b84983470c295a6c2c5, type: 3}
   chineseFontAsset: {fileID: 11400000, guid: dcd2f710d05e3f14fb4787528f38dbf4, type: 2}
-  useMockData: 1
+  apiUrl: http://183.214.222.76:9000/api/Home/GetRemoteDataFromAlwit
+  companyId: 1033
+  requestTimeoutSeconds: 30
+  dateSelector: {fileID: 2087193187}
+  slotSelector: {fileID: 300583408}
+  workAreaSelector: {fileID: 303657884}
+  useMockData: 0
   minScale: 0.5
   maxScale: 3
   scrollWheelSpeed: 0.1
