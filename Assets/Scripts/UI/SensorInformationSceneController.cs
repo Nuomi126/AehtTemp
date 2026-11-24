@@ -426,16 +426,16 @@ public sealed class SensorInformationSceneController : MonoBehaviour
         {
             float y = 0.60f - i * 0.10f;
             int node = 1 + i * 4;
-            AddSensorLabel(2, 0, 0, node, 0.09f, y, 0.05f);
-            AddSensorLabel(3, 0, 0, node, 0.91f, y, 0.05f);
+            AddSensorLabel(2, 0, 0, node, 0.105f, y, 0.05f);
+            AddSensorLabel(3, 0, 0, node, 0.895f, y, 0.05f);
         }
 
-        Text inlet = CreateText("Inlet", sensorOverlay, "烟道端", DarkText, 22,
+        Text inlet = CreateText("Inlet", sensorOverlay, "烟\n道\n端", DarkText, 22,
             FontStyles.Bold, TextAlignmentOptions.Center);
-        SetAnchors(inlet.rectTransform, new Vector2(0.01f, 0.43f), new Vector2(0.05f, 0.57f));
-        Text outlet = CreateText("Outlet", sensorOverlay, "出铝端", DarkText, 22,
+        SetAnchors(inlet.rectTransform, new Vector2(0.052f, 0.405f), new Vector2(0.078f, 0.595f));
+        Text outlet = CreateText("Outlet", sensorOverlay, "出\n铝\n端", DarkText, 22,
             FontStyles.Bold, TextAlignmentOptions.Center);
-        SetAnchors(outlet.rectTransform, new Vector2(0.95f, 0.43f), new Vector2(0.99f, 0.57f));
+        SetAnchors(outlet.rectTransform, new Vector2(0.922f, 0.405f), new Vector2(0.948f, 0.595f));
     }
 
     private void AddSensorLabel(int position, int direction, int index, int node,
@@ -471,7 +471,8 @@ public sealed class SensorInformationSceneController : MonoBehaviour
             }
             string value = float.IsNaN(reading.temperature) || float.IsInfinity(reading.temperature)
                 ? "--" : $"{reading.temperature:0}";
-            string valueColor = reading.temperature >= 400f ? "#D32F2F" : "#171717";
+            Color32 thresholdColor = phoneTableScript.GetTemperatureTextColor(reading.temperature);
+            string valueColor = $"#{ColorUtility.ToHtmlStringRGB(thresholdColor)}";
             pair.Value.text = $"<size={nameSize}>{reading.displayName}</size>\n<color={valueColor}>{value}</color>";
         }
     }
@@ -487,9 +488,8 @@ public sealed class SensorInformationSceneController : MonoBehaviour
         {
             float low = i / 35f;
             float high = (i + 1) / 35f;
-            Color color = Color.Lerp(new Color32(20, 58, 204, 255), new Color32(27, 182, 38, 255), Mathf.Clamp01(low * 2f));
-            if (low >= 0.5f) color = Color.Lerp(new Color32(27, 182, 38, 255), new Color32(251, 233, 15, 255), (low - 0.5f) * 2f);
-            if (low >= 0.72f) color = Color.Lerp(new Color32(251, 233, 15, 255), new Color32(237, 37, 23, 255), (low - 0.72f) / 0.28f);
+            float representativeTemperature = Mathf.Lerp(25f, 425f, (i + 0.5f) / 35f);
+            Color color = phoneTableScript.GetTemperatureTextColor(representativeTemperature);
             Image segment = CreatePanel($"Segment{i}", heatMapScale, color);
             SetAnchors(segment.rectTransform, new Vector2(0, low), new Vector2(1, high));
             heatMapScaleSegments.Add(segment.rectTransform);

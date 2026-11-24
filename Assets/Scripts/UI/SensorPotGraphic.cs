@@ -10,14 +10,18 @@ public sealed class SensorPotGraphic : MaskableGraphic
         Rect r = GetPixelAdjustedRect();
         if (r.width <= 0 || r.height <= 0) return;
 
-        // The widening sides match the chamber outline in the legacy display.
+        // Keep the shoulders broad and use several symmetric steps on each
+        // side so the edge reads as a smooth chamber wall at phone sizes.
         Vector2[] outline =
         {
-            new(0.095f, 0.94f), new(0.905f, 0.94f),
-            new(0.95f, 0.78f), new(0.98f, 0.55f), new(0.98f, 0.45f),
-            new(0.95f, 0.22f), new(0.905f, 0.06f), new(0.095f, 0.06f),
-            new(0.05f, 0.22f), new(0.02f, 0.45f), new(0.02f, 0.55f),
-            new(0.05f, 0.78f)
+            new(0.080f, 0.935f), new(0.920f, 0.935f),
+            new(0.938f, 0.875f), new(0.956f, 0.790f), new(0.970f, 0.690f),
+            new(0.980f, 0.580f), new(0.983f, 0.500f), new(0.980f, 0.420f),
+            new(0.970f, 0.310f), new(0.956f, 0.210f), new(0.938f, 0.125f),
+            new(0.920f, 0.065f), new(0.080f, 0.065f),
+            new(0.062f, 0.125f), new(0.044f, 0.210f), new(0.030f, 0.310f),
+            new(0.020f, 0.420f), new(0.017f, 0.500f), new(0.020f, 0.580f),
+            new(0.030f, 0.690f), new(0.044f, 0.790f), new(0.062f, 0.875f)
         };
         AddPolygon(vh, r, outline, new Color32(23, 23, 23, 255));
         var inset = new Vector2[outline.Length];
