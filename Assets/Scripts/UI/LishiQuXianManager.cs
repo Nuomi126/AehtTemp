@@ -27,7 +27,7 @@ namespace Aeht.UI
 
         [Header("历史数据")]
         [SerializeField] private string apiUrl = "http://183.214.222.76:9000/api/Home/GetRemoteDataFromAlwit";
-        [SerializeField] private string companyId = "1033";
+        [SerializeField] private string companyId = "1031";
         [SerializeField] private int requestTimeoutSeconds = 30;
         [SerializeField] private riqSelector dateSelector;
         [SerializeField] private SlotNumberSelector slotSelector;

@@ -4157,7 +4157,7 @@ MonoBehaviour:
   chartPrefab: {fileID: 1925259705892663582, guid: 400c803b675a3b84983470c295a6c2c5, type: 3}
   chineseFontAsset: {fileID: 11400000, guid: dcd2f710d05e3f14fb4787528f38dbf4, type: 2}
   apiUrl: http://183.214.222.76:9000/api/Home/GetRemoteDataFromAlwit
-  companyId: 1033
+  companyId: 1031
   requestTimeoutSeconds: 30
   dateSelector: {fileID: 2087193187}
   slotSelector: {fileID: 300583408}
