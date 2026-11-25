@@ -220,11 +220,11 @@ namespace Aeht.UI
         private void EnsureHistoryOverlays()
         {
             if (historyChart == null) return;
-            historySummaryText = CreateChartOverlay("HistorySummary", new Vector2(0.02f, 1f),
-                new Vector2(0.98f, 1f), new Vector2(0f, -4f), 42f, 10.5f,
+            historySummaryText = CreateChartOverlay("HistorySummary", new Vector2(0.025f, 1f),
+                new Vector2(0.975f, 1f), new Vector2(0f, -6f), 82f, 18f,
                 TextAlignmentOptions.TopLeft);
-            eventLegendText = CreateChartOverlay("HistoryEventLegend", new Vector2(0.02f, 0f),
-                new Vector2(0.98f, 0f), new Vector2(0f, 5f), 62f, 10f,
+            eventLegendText = CreateChartOverlay("HistoryEventLegend", new Vector2(0.025f, 0f),
+                new Vector2(0.975f, 0f), new Vector2(0f, 10f), 128f, 16f,
                 TextAlignmentOptions.BottomLeft);
         }
 
@@ -251,7 +251,9 @@ namespace Aeht.UI
             text.color = Color.white;
             text.richText = true;
             text.raycastTarget = false;
-            text.overflowMode = TextOverflowModes.Ellipsis;
+            text.lineSpacing = -3f;
+            text.margin = new Vector4(3f, 2f, 3f, 2f);
+            text.overflowMode = TextOverflowModes.Overflow;
             go.transform.SetAsLastSibling();
             return text;
         }
@@ -260,6 +262,7 @@ namespace Aeht.UI
         {
             historyChart.RemoveData();
             historyChart.RemoveAllSerie();
+            historyChart.RemoveChartComponents<Legend>();
             var legend = historyChart.EnsureChartComponent<Legend>();
             legend.show = false;
             if (historySummaryText != null) historySummaryText.text = string.Empty;
@@ -290,7 +293,7 @@ namespace Aeht.UI
             panelRT.anchorMin = new Vector2(1, 1);
             panelRT.anchorMax = new Vector2(1, 1);
             panelRT.pivot = new Vector2(1, 1);
-            panelRT.anchoredPosition = new Vector2(-10, -10);
+            panelRT.anchoredPosition = new Vector2(-8, -190);
             panelRT.sizeDelta = new Vector2(56, 180);
 
             AddZoomButton(panel.transform, "+", 0, () =>
@@ -324,7 +327,7 @@ namespace Aeht.UI
             rt.sizeDelta = new Vector2(-4, 52); // 左右各缩 2px 间距
 
             var img = go.GetComponent<Image>();
-            img.color = new Color(0.1f, 0.1f, 0.1f, 0.85f);
+            img.color = new Color(0.08f, 0.09f, 0.11f, 0.78f);
 
             var btn = go.GetComponent<Button>();
             btn.targetGraphic = img;
@@ -365,17 +368,39 @@ namespace Aeht.UI
             var legend = chart.EnsureChartComponent<Legend>();
             legend.show = true;
             legend.location.align = Location.Align.TopCenter;
-            legend.location.top = 0.045f;
+            legend.location.top = 0.065f;
             legend.orient = Orient.Horizonal;
             legend.selectedMode = Legend.SelectedMode.Multiple;
+            legend.itemWidth = 16f;
+            legend.itemHeight = 9f;
+            legend.itemGap = 12f;
             legend.data = new List<string>
             {
-                "实时电流", "实时电压", "滤波电压", "折合电压", "平滑电压",
-                "设定电压", "电压上限", "电压下限", "实际下料间隔", "基准下料间隔"
+                "实时电压", "滤波电压", "折合电压", "平滑电压", "设定电压"
             };
+            legend.textLimit.enable = false;
             legend.labelStyle.textStyle.color = Color.white;
-            legend.labelStyle.textStyle.fontSize = 11;
+            legend.labelStyle.textStyle.fontSize = 17;
             ApplyFont(legend.labelStyle.textStyle);
+
+            // 将电流、阈值和下料间隔放在第二行，避免窄屏把十个图例压成一条细线。
+            var secondaryLegend = chart.AddChartComponent<Legend>();
+            secondaryLegend.show = true;
+            secondaryLegend.location.align = Location.Align.TopCenter;
+            secondaryLegend.location.top = 0.098f;
+            secondaryLegend.orient = Orient.Horizonal;
+            secondaryLegend.selectedMode = Legend.SelectedMode.Multiple;
+            secondaryLegend.itemWidth = 16f;
+            secondaryLegend.itemHeight = 9f;
+            secondaryLegend.itemGap = 12f;
+            secondaryLegend.data = new List<string>
+            {
+                "实时电流", "电压上限", "电压下限", "实际下料间隔", "基准下料间隔"
+            };
+            secondaryLegend.textLimit.enable = false;
+            secondaryLegend.labelStyle.textStyle.color = Color.white;
+            secondaryLegend.labelStyle.textStyle.fontSize = 17;
+            ApplyFont(secondaryLegend.labelStyle.textStyle);
 
             var tooltip = chart.EnsureChartComponent<Tooltip>();
             tooltip.show = true;
@@ -384,10 +409,10 @@ namespace Aeht.UI
 
             var grid = chart.EnsureChartComponent<GridCoord>();
             grid.show = true;
-            grid.left = 60;
-            grid.right = 65;
-            grid.top = 125;
-            grid.bottom = 88;
+            grid.left = 74;
+            grid.right = 76;
+            grid.top = 190;
+            grid.bottom = 175;
             grid.borderWidth = 1f;
             grid.borderColor = new Color32(130, 130, 130, 160);
 
@@ -398,7 +423,7 @@ namespace Aeht.UI
             xAxis.axisLabel.show = true;
             xAxis.axisLabel.interval = 59;
             xAxis.axisLabel.textStyle.color = Color.white;
-            xAxis.axisLabel.textStyle.fontSize = 12;
+            xAxis.axisLabel.textStyle.fontSize = 16;
             ApplyFont(xAxis.axisLabel.textStyle);
             xAxis.splitLine.show = true;
             xAxis.splitLine.interval = 59;
@@ -425,6 +450,7 @@ namespace Aeht.UI
             leftAxis.splitNumber = 10;
             leftAxis.axisLabel.show = true;
             leftAxis.axisLabel.textStyle.color = Color.white;
+            leftAxis.axisLabel.textStyle.fontSize = 16;
             ApplyFont(leftAxis.axisLabel.textStyle);
 
             var rightAxis = chart.AddChartComponent<YAxis>();
@@ -439,6 +465,7 @@ namespace Aeht.UI
             rightAxis.position = Axis.AxisPosition.Right;
             rightAxis.axisLabel.show = true;
             rightAxis.axisLabel.textStyle.color = Color.white;
+            rightAxis.axisLabel.textStyle.fontSize = 16;
             ApplyFont(rightAxis.axisLabel.textStyle);
 
             Color currentColor = new Color32(235, 54, 205, 255);
@@ -615,7 +642,7 @@ namespace Aeht.UI
             label.show = true;
             label.formatter = caption;
             label.textStyle.color = color;
-            label.textStyle.fontSize = 9;
+            label.textStyle.fontSize = 14;
             ApplyFont(label.textStyle);
         }
 
@@ -683,10 +710,12 @@ namespace Aeht.UI
             float baseFeedSeconds = GetBaseFeedSeconds(sample);
             float actualFeedSeconds = GetActualFeedSeconds(sample);
             historySummaryText.text =
-                $"时间 {selectedDate} {minutes / 60:D2}:{minutes % 60:D2}　设定 {FormatVoltage(sample.setVoltage)}　" +
-                $"实际 {FormatVoltage(actualVoltage)}　电流 {sample.seriesCurrent / 10f:F1}kA\n" +
+                $"<b>时间</b>　{selectedDate}　{minutes / 60:D2}:{minutes % 60:D2}\n" +
+                $"<color=#FFDA48><b>设定</b></color> {FormatVoltage(sample.setVoltage)}　" +
+                $"<color=#FF5C7E><b>实际</b></color> {FormatVoltage(actualVoltage)}　" +
+                $"<color=#EB36CD><b>电流</b></color> {sample.seriesCurrent / 10f:F1}kA\n" +
                 $"针振 {sample.fluctuation}mV　摆动 {sample.swing}mV　" +
-                $"基准间隔 {FormatSeconds(baseFeedSeconds)}　实际间隔 {FormatSeconds(actualFeedSeconds)}";
+                $"基准 {FormatSeconds(baseFeedSeconds)}　实际 {FormatSeconds(actualFeedSeconds)}";
         }
 
         private static string FormatVoltage(int millivolts) =>
@@ -702,7 +731,7 @@ namespace Aeht.UI
             eventLegendText.text =
                 $"{LegendToken(specialColor, "●抬母线　●出铝　●换极")}　{LegendToken(aeColor, "●效应")}　{LegendToken(manualColor, "●纯手动")}\n" +
                 $"{LegendToken(autoColor, "●自动下料")}　{LegendToken(manualColor, "●手动下料")}　" +
-                $"{LegendToken(aebColor, "●自动AEB")}　{LegendToken(manualColor, "●手动AEB")}　" +
+                $"{LegendToken(aebColor, "●自动AEB")}　{LegendToken(manualColor, "●手动AEB")}\n" +
                 $"{LegendToken(additiveColor, "●自动加氟")}　{LegendToken(manualColor, "●手动加氟")}\n" +
                 $"{LegendToken(autoColor, "↑自动提极　↓自动降极")}　" +
                 LegendToken(manualColor, "↑手动提极　↓手动降极");
