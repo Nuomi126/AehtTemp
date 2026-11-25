@@ -37,7 +37,17 @@ namespace Aeht.UI
         private Coroutine loadRoutine;
         private Coroutine filterRoutine;
         private TextMeshProUGUI statusText;
+        private TextMeshProUGUI historySummaryText;
+        private TextMeshProUGUI eventLegendText;
         private GlobalElectrolyticCellDataManager slotConfigManager;
+
+        private struct AnodeMarker
+        {
+            public int dataIndex;
+            public bool automatic;
+            public bool upward;
+            public float xOffset;
+        }
 
         // 整图缩放/拖拽状态（Update 中处理）
         [Header("整图缩放")]
@@ -77,6 +87,7 @@ namespace Aeht.UI
             if (slotConfigManager != null) slotConfigManager.OnDataUpdated += OnSlotConfigurationUpdated;
 
             EnsureStatusText();
+            EnsureHistoryOverlays();
             if (!useMockData) ClearHistoryChart();
             if (useMockData) RenderMockData();
             else StartCoroutine(LoadAfterSelectors());
@@ -206,12 +217,53 @@ namespace Aeht.UI
             if (statusText != null) statusText.text = message;
         }
 
+        private void EnsureHistoryOverlays()
+        {
+            if (historyChart == null) return;
+            historySummaryText = CreateChartOverlay("HistorySummary", new Vector2(0.02f, 1f),
+                new Vector2(0.98f, 1f), new Vector2(0f, -4f), 42f, 10.5f,
+                TextAlignmentOptions.TopLeft);
+            eventLegendText = CreateChartOverlay("HistoryEventLegend", new Vector2(0.02f, 0f),
+                new Vector2(0.98f, 0f), new Vector2(0f, 5f), 62f, 10f,
+                TextAlignmentOptions.BottomLeft);
+        }
+
+        private TextMeshProUGUI CreateChartOverlay(string objectName, Vector2 anchorMin, Vector2 anchorMax,
+            Vector2 anchoredPosition, float height, float fontSize, TextAlignmentOptions alignment)
+        {
+            Transform existing = historyChart.transform.Find(objectName);
+            GameObject go = existing != null
+                ? existing.gameObject
+                : new GameObject(objectName, typeof(RectTransform), typeof(TextMeshProUGUI));
+            if (existing == null) go.transform.SetParent(historyChart.transform, false);
+
+            var rect = (RectTransform)go.transform;
+            rect.anchorMin = anchorMin;
+            rect.anchorMax = anchorMax;
+            rect.pivot = new Vector2(0.5f, anchorMin.y);
+            rect.anchoredPosition = anchoredPosition;
+            rect.sizeDelta = new Vector2(0f, height);
+
+            var text = go.GetComponent<TextMeshProUGUI>();
+            text.font = chineseFontAsset;
+            text.fontSize = fontSize;
+            text.alignment = alignment;
+            text.color = Color.white;
+            text.richText = true;
+            text.raycastTarget = false;
+            text.overflowMode = TextOverflowModes.Ellipsis;
+            go.transform.SetAsLastSibling();
+            return text;
+        }
+
         private void ClearHistoryChart()
         {
             historyChart.RemoveData();
             historyChart.RemoveAllSerie();
             var legend = historyChart.EnsureChartComponent<Legend>();
             legend.show = false;
+            if (historySummaryText != null) historySummaryText.text = string.Empty;
+            if (eventLegendText != null) eventLegendText.text = string.Empty;
             historyChart.RefreshChart();
         }
 
@@ -313,20 +365,29 @@ namespace Aeht.UI
             var legend = chart.EnsureChartComponent<Legend>();
             legend.show = true;
             legend.location.align = Location.Align.TopCenter;
-            legend.location.top = 0.01f;
+            legend.location.top = 0.045f;
             legend.orient = Orient.Horizonal;
             legend.selectedMode = Legend.SelectedMode.Multiple;
-            legend.data = new List<string> { "工作电压", "电压上限", "电压下限", "系列电流", "实际下料", "基准下料", "作业状态" };
+            legend.data = new List<string>
+            {
+                "实时电流", "实时电压", "滤波电压", "折合电压", "平滑电压",
+                "设定电压", "电压上限", "电压下限", "实际下料间隔", "基准下料间隔"
+            };
             legend.labelStyle.textStyle.color = Color.white;
-            legend.labelStyle.textStyle.fontSize = 13;
+            legend.labelStyle.textStyle.fontSize = 11;
             ApplyFont(legend.labelStyle.textStyle);
+
+            var tooltip = chart.EnsureChartComponent<Tooltip>();
+            tooltip.show = true;
+            tooltip.type = Tooltip.Type.Line;
+            tooltip.trigger = Tooltip.Trigger.Axis;
 
             var grid = chart.EnsureChartComponent<GridCoord>();
             grid.show = true;
             grid.left = 60;
             grid.right = 65;
-            grid.top = 68;
-            grid.bottom = 65;
+            grid.top = 125;
+            grid.bottom = 88;
             grid.borderWidth = 1f;
             grid.borderColor = new Color32(130, 130, 130, 160);
 
@@ -337,14 +398,24 @@ namespace Aeht.UI
             xAxis.axisLabel.show = true;
             xAxis.axisLabel.interval = 59;
             xAxis.axisLabel.textStyle.color = Color.white;
-            xAxis.axisLabel.textStyle.fontSize = 13;
+            xAxis.axisLabel.textStyle.fontSize = 12;
             ApplyFont(xAxis.axisLabel.textStyle);
             xAxis.splitLine.show = true;
             xAxis.splitLine.interval = 59;
 
-            float average = (float)samples.Average(s => s.voltage);
-            float voltageMin = Mathf.Floor((average - 600f) / 100f) * 100f;
-            float voltageMax = voltageMin + 1000f;
+            var voltageValues = samples.SelectMany(s => new[]
+                {
+                    s.setVoltage, GetActualVoltage(s), s.standardVoltage, s.filteredVoltage,
+                    s.smoothedVoltage, s.voltageUpper, s.voltageLower
+                })
+                .Where(IsValidVoltage)
+                .ToList();
+            float observedMin = voltageValues.Count > 0 ? voltageValues.Min() : 3500f;
+            float observedMax = voltageValues.Count > 0 ? voltageValues.Max() : 4500f;
+            float voltageMin = Mathf.Floor((observedMin - 700f) / 100f) * 100f;
+            float voltageMax = Mathf.Ceil((observedMax + 250f) / 100f) * 100f;
+            if (voltageMax - voltageMin < 1300f) voltageMax = voltageMin + 1300f;
+
             var leftAxis = chart.EnsureChartComponent<YAxis>();
             leftAxis.show = true;
             leftAxis.type = Axis.AxisType.Value;
@@ -362,7 +433,7 @@ namespace Aeht.UI
             rightAxis.minMaxType = Axis.AxisMinMaxType.Custom;
             rightAxis.min = 0;
             float maxSecondary = samples.Max(s => Mathf.Max(s.seriesCurrent / 10f,
-                Mathf.Max(s.actualFeedingInterval, s.baseFeedingInterval)));
+                Mathf.Max(GetActualFeedSeconds(s), GetBaseFeedSeconds(s))));
             rightAxis.max = Mathf.Ceil(Mathf.Max(50f, maxSecondary + 50f) / 50f) * 50f;
             rightAxis.splitNumber = 5;
             rightAxis.position = Axis.AxisPosition.Right;
@@ -370,17 +441,50 @@ namespace Aeht.UI
             rightAxis.axisLabel.textStyle.color = Color.white;
             ApplyFont(rightAxis.axisLabel.textStyle);
 
-            AddHistoryLine(chart, "工作电压", 0, new Color32(255, 90, 105, 255), 2f);
-            AddHistoryLine(chart, "电压上限", 0, new Color32(255, 188, 64, 255), 1f);
-            AddHistoryLine(chart, "电压下限", 0, new Color32(255, 188, 64, 255), 1f);
-            AddHistoryLine(chart, "系列电流", 1, new Color32(86, 205, 255, 255), 1.5f);
-            AddHistoryLine(chart, "实际下料", 1, new Color32(175, 124, 255, 255), 1.5f);
-            AddHistoryLine(chart, "基准下料", 1, new Color32(128, 224, 129, 255), 1f);
-            var events = chart.AddSerie<Scatter>("作业状态");
-            events.yAxisIndex = 0;
-            events.symbol.show = false;
-            events.animation.enable = false;
+            Color currentColor = new Color32(235, 54, 205, 255);
+            Color actualVoltageColor = new Color32(255, 92, 126, 255);
+            Color filteredVoltageColor = new Color32(26, 196, 180, 255);
+            Color standardVoltageColor = new Color32(62, 104, 255, 255);
+            Color smoothedVoltageColor = new Color32(225, 225, 225, 255);
+            Color setVoltageColor = new Color32(255, 218, 72, 255);
+            Color limitColor = new Color32(255, 166, 48, 255);
+            Color actualFeedColor = new Color32(177, 111, 255, 255);
+            Color baseFeedColor = new Color32(113, 221, 132, 255);
 
+            AddHistoryLine(chart, "实时电流", 1, currentColor, 1.4f);
+            AddHistoryLine(chart, "实时电压", 0, actualVoltageColor, 1.8f);
+            AddHistoryLine(chart, "滤波电压", 0, filteredVoltageColor, 2.2f);
+            AddHistoryLine(chart, "折合电压", 0, standardVoltageColor, 1.4f);
+            AddHistoryLine(chart, "平滑电压", 0, smoothedVoltageColor, 1.2f);
+            AddHistoryLine(chart, "设定电压", 0, setVoltageColor, 1.1f, LineStyle.Type.Dashed);
+            AddHistoryLine(chart, "电压上限", 0, limitColor, 1f, LineStyle.Type.Dashed);
+            AddHistoryLine(chart, "电压下限", 0, limitColor, 1f, LineStyle.Type.Dashed);
+            AddHistoryLine(chart, "实际下料间隔", 1, actualFeedColor, 1.5f,
+                LineStyle.Type.Solid, LineType.StepMiddle);
+            AddHistoryLine(chart, "基准下料间隔", 1, baseFeedColor, 1.2f,
+                LineStyle.Type.Dashed, LineType.StepMiddle);
+
+            Color specialColor = new Color32(255, 183, 61, 255);
+            Color aeColor = new Color32(255, 92, 92, 255);
+            Color autoColor = new Color32(70, 210, 95, 255);
+            Color manualColor = new Color32(245, 75, 75, 255);
+            Color aebColor = new Color32(68, 193, 255, 255);
+            Color additiveColor = new Color32(214, 113, 255, 255);
+
+            AddEventMarkerSerie(chart, "抬母线", specialColor);       // 10
+            AddEventMarkerSerie(chart, "出铝", specialColor);         // 11
+            AddEventMarkerSerie(chart, "换极", specialColor);         // 12
+            AddEventMarkerSerie(chart, "效应", aeColor);              // 13
+            AddEventMarkerSerie(chart, "纯手动", manualColor);         // 14
+            AddEventMarkerSerie(chart, "自动下料", autoColor);         // 15
+            AddEventMarkerSerie(chart, "手动下料", manualColor);       // 16
+            AddEventMarkerSerie(chart, "自动AEB", aebColor);           // 17
+            AddEventMarkerSerie(chart, "手动AEB", manualColor);        // 18
+            AddEventMarkerSerie(chart, "自动加氟", additiveColor);     // 19
+            AddEventMarkerSerie(chart, "手动加氟", manualColor);       // 20
+
+            const int dataSeriesCount = 21;
+            var anodeMarkers = new List<AnodeMarker>();
             uint lastSpecial = 0, lastFeeding = 0, lastAnode = 0;
             for (int record = 1; record <= 720; record++)
             {
@@ -388,71 +492,224 @@ namespace Aeht.UI
                 chart.AddXAxisData($"{minutes / 60:D2}:{minutes % 60:D2}");
                 if (!byIndex.TryGetValue(record, out var sample))
                 {
-                    for (int series = 0; series < 7; series++) chart.AddData(series, 0).ignore = true;
+                    for (int series = 0; series < dataSeriesCount; series++)
+                        chart.AddData(series, 0).ignore = true;
                     continue;
                 }
 
-                chart.AddData(0, sample.voltage);
-                chart.AddData(1, sample.voltageUpper);
-                chart.AddData(2, sample.voltageLower);
-                chart.AddData(3, sample.seriesCurrent / 10f);
-                chart.AddData(4, sample.actualFeedingInterval);
-                chart.AddData(5, sample.baseFeedingInterval);
+                AddHistoryValue(chart, 0, sample.seriesCurrent / 10f, sample.seriesCurrent > 0);
+                int actualVoltage = GetActualVoltage(sample);
+                AddHistoryValue(chart, 1, actualVoltage, IsValidVoltage(actualVoltage));
+                AddHistoryValue(chart, 2, sample.filteredVoltage, IsValidVoltage(sample.filteredVoltage));
+                AddHistoryValue(chart, 3, sample.standardVoltage, IsValidVoltage(sample.standardVoltage));
+                AddHistoryValue(chart, 4, sample.smoothedVoltage, IsValidVoltage(sample.smoothedVoltage));
+                AddHistoryValue(chart, 5, sample.setVoltage, IsValidVoltage(sample.setVoltage));
+                AddHistoryValue(chart, 6, sample.voltageUpper, IsValidVoltage(sample.voltageUpper));
+                AddHistoryValue(chart, 7, sample.voltageLower, IsValidVoltage(sample.voltageLower));
+                float actualFeedSeconds = GetActualFeedSeconds(sample);
+                float baseFeedSeconds = GetBaseFeedSeconds(sample);
+                AddHistoryValue(chart, 8, actualFeedSeconds, actualFeedSeconds >= 0f);
+                AddHistoryValue(chart, 9, baseFeedSeconds, baseFeedSeconds >= 0f);
 
-                string eventLabel = GetEventLabel(sample, lastSpecial, lastFeeding, lastAnode);
+                uint specialStarted = sample.specialState & ~lastSpecial;
+                uint feedingStarted = sample.feedingState & ~lastFeeding;
+                uint anodeStarted = sample.anodeMoveState & ~lastAnode;
                 lastSpecial = sample.specialState;
                 lastFeeding = sample.feedingState;
                 lastAnode = sample.anodeMoveState;
-                if (eventLabel.Length == 0) chart.AddData(6, 0).ignore = true;
-                else
-                {
-                    var point = chart.AddData(6, voltageMin + 80f);
-                    var label = point.EnsureComponent<LabelStyle>();
-                    label.show = true;
-                    label.formatter = eventLabel;
-                    label.textStyle.color = new Color32(116, 235, 150, 255);
-                    label.textStyle.fontSize = 11;
-                    ApplyFont(label.textStyle);
-                }
+
+                AddEventPoint(chart, 10, (specialStarted & 16) != 0, voltageMin + 70f, "母", specialColor);
+                AddEventPoint(chart, 11, (specialStarted & 2) != 0, voltageMin + 115f, "铝", specialColor);
+                AddEventPoint(chart, 12, (specialStarted & 4) != 0, voltageMin + 160f, "换", specialColor);
+                AddEventPoint(chart, 13, (specialStarted & 1) != 0, voltageMin + 205f, "AE", aeColor);
+                AddEventPoint(chart, 14, (specialStarted & 32) != 0, voltageMin + 250f, "手", manualColor);
+                AddEventPoint(chart, 15, (feedingStarted & 8) != 0, voltageMin + 295f, "自料", autoColor);
+                AddEventPoint(chart, 16, (feedingStarted & 4) != 0, voltageMin + 340f, "手料", manualColor);
+                AddEventPoint(chart, 17, (feedingStarted & 2) != 0, voltageMin + 385f, "AEB", aebColor);
+                AddEventPoint(chart, 18, (feedingStarted & 1) != 0, voltageMin + 430f, "(AEB)", manualColor);
+                AddEventPoint(chart, 19, (feedingStarted & 32) != 0, voltageMin + 475f, "AlF", additiveColor);
+                AddEventPoint(chart, 20, (feedingStarted & 16) != 0, voltageMin + 520f, "(AlF)", manualColor);
+                AddAnodeMarkers(anodeMarkers, record - 1, anodeStarted);
             }
+
+            SetHistorySummary(samples.OrderBy(s => s.recordIndex).Last());
+            SetEventLegend(specialColor, aeColor, autoColor, manualColor, aebColor, additiveColor);
+            ConfigureAnodeMarkerDrawing(chart, anodeMarkers, autoColor, manualColor);
             xAxis.SetAllDirty();
-            chart.onDrawAfterSerie = null;
             chart.RefreshChart();
         }
 
-        private static string GetEventLabel(HistoryCurveFrame71.Sample sample,
-            uint previousSpecial, uint previousFeeding, uint previousAnode)
-        {
-            // Bit meanings follow hiscurvetools.js: special, feeding, anode move.
-            uint special = sample.specialState & ~previousSpecial;
-            uint feeding = sample.feedingState & ~previousFeeding;
-            uint anode = sample.anodeMoveState & ~previousAnode;
-            if ((special & 1) != 0) return "AE";
-            if ((special & 2) != 0) return "出铝";
-            if ((special & 4) != 0) return "换极";
-            if ((special & 16) != 0) return "母线";
-            if ((special & 32) != 0) return "手动";
-            if ((feeding & 2) != 0) return "AEB";
-            if ((feeding & 1) != 0) return "(AEB)";
-            if ((feeding & 32) != 0) return "AlF";
-            if ((feeding & 16) != 0) return "(AlF)";
-            if ((anode & 2) != 0) return "自动↑";
-            if ((anode & 1) != 0) return "手动↑";
-            if ((anode & 8) != 0) return "自动↓";
-            if ((anode & 4) != 0) return "手动↓";
-            return string.Empty;
-        }
-
-        private static void AddHistoryLine(LineChart chart, string title, int axis, Color color, float width)
+        private static void AddHistoryLine(LineChart chart, string title, int axis, Color color, float width,
+            LineStyle.Type style = LineStyle.Type.Solid, LineType lineType = LineType.Normal)
         {
             var series = chart.AddSerie<Line>(title);
             series.yAxisIndex = axis;
             series.lineStyle.width = width;
+            series.lineStyle.type = style;
             series.lineStyle.color = color;
             series.itemStyle.color = color;
+            series.lineType = lineType;
             series.symbol.show = false;
             series.animation.enable = false;
         }
+
+        private static void AddHistoryValue(LineChart chart, int seriesIndex, float value, bool valid)
+        {
+            var point = chart.AddData(seriesIndex, valid ? value : 0f);
+            point.ignore = !valid;
+        }
+
+        private static bool IsValidVoltage(int millivolts) =>
+            millivolts >= 1000 && millivolts <= 10000;
+
+        private static int GetActualVoltage(HistoryCurveFrame71.Sample sample)
+        {
+            // Some plants store a signed average-voltage correction in this
+            // field. Never let a two's-complement value such as 0xFF15 expand
+            // the voltage axis to 65 kV; fall back to the measured filter value.
+            if (IsValidVoltage(sample.averageVoltage)) return sample.averageVoltage;
+            if (IsValidVoltage(sample.filteredVoltage)) return sample.filteredVoltage;
+            if (IsValidVoltage(sample.standardVoltage)) return sample.standardVoltage;
+            return 0;
+        }
+
+        private static float GetBaseFeedSeconds(HistoryCurveFrame71.Sample sample)
+        {
+            return sample.baseFeedingInterval > 0 && sample.baseFeedingInterval < short.MaxValue
+                ? sample.baseFeedingInterval * 0.1f : -1f;
+        }
+
+        private static float GetActualFeedSeconds(HistoryCurveFrame71.Sample sample)
+        {
+            if (sample.actualFeedingInterval == 0) return -1f;
+            int signedValue = unchecked((short)sample.actualFeedingInterval);
+            if (signedValue >= 0) return signedValue * 0.1f;
+
+            // Historical controllers can store the actual interval as a signed
+            // correction to the base interval (for example 940 + (-152) =
+            // 788 deciseconds). This is the same 0.1 s unit used by live frames.
+            int corrected = sample.baseFeedingInterval + signedValue;
+            return corrected >= 0 ? corrected * 0.1f : -1f;
+        }
+
+        private static void AddEventMarkerSerie(LineChart chart, string title, Color color)
+        {
+            var series = chart.AddSerie<Scatter>(title);
+            series.yAxisIndex = 0;
+            series.symbol.show = true;
+            series.symbol.type = SymbolType.Circle;
+            series.symbol.size = 5f;
+            series.symbol.color = color;
+            series.itemStyle.color = color;
+            series.animation.enable = false;
+        }
+
+        private void AddEventPoint(LineChart chart, int seriesIndex, bool active, float value,
+            string caption, Color color)
+        {
+            var point = chart.AddData(seriesIndex, active ? value : 0f);
+            point.ignore = !active;
+            if (!active) return;
+
+            var label = point.EnsureComponent<LabelStyle>();
+            label.show = true;
+            label.formatter = caption;
+            label.textStyle.color = color;
+            label.textStyle.fontSize = 9;
+            ApplyFont(label.textStyle);
+        }
+
+        private static void AddAnodeMarkers(List<AnodeMarker> markers, int dataIndex, uint state)
+        {
+            var atPoint = new List<AnodeMarker>(4);
+            if ((state & 2) != 0) atPoint.Add(new AnodeMarker { automatic = true, upward = true });
+            if ((state & 8) != 0) atPoint.Add(new AnodeMarker { automatic = true, upward = false });
+            if ((state & 1) != 0) atPoint.Add(new AnodeMarker { automatic = false, upward = true });
+            if ((state & 4) != 0) atPoint.Add(new AnodeMarker { automatic = false, upward = false });
+            for (int i = 0; i < atPoint.Count; i++)
+            {
+                var marker = atPoint[i];
+                marker.dataIndex = dataIndex;
+                marker.xOffset = (i - (atPoint.Count - 1) * 0.5f) * 9f;
+                markers.Add(marker);
+            }
+        }
+
+        private static void ConfigureAnodeMarkerDrawing(LineChart chart, List<AnodeMarker> markers,
+            Color autoColor, Color manualColor)
+        {
+            chart.onDrawAfterSerie = (vh, serie) =>
+            {
+                if (serie.serieName != "滤波电压") return;
+                foreach (var marker in markers)
+                {
+                    if (marker.dataIndex < 0 || marker.dataIndex >= serie.data.Count) continue;
+                    Vector3 point = serie.data[marker.dataIndex].context.position;
+                    if (point == Vector3.zero) continue;
+                    point.x += marker.xOffset;
+                    DrawAnodeArrow(vh, point, marker.upward,
+                        marker.automatic ? autoColor : manualColor);
+                }
+            };
+        }
+
+        private static void DrawAnodeArrow(VertexHelper vh, Vector3 point, bool upward, Color color)
+        {
+            const float headHalfWidth = 6f;
+            const float headHeight = 9f;
+            const float shaftHalfWidth = 2f;
+            const float shaftLength = 11f;
+            float direction = upward ? 1f : -1f;
+            float baseY = point.y + direction * shaftLength;
+            float tipY = baseY + direction * headHeight;
+            UGL.DrawQuadrilateral(vh,
+                new Vector3(point.x - shaftHalfWidth, point.y, point.z),
+                new Vector3(point.x + shaftHalfWidth, point.y, point.z),
+                new Vector3(point.x + shaftHalfWidth, baseY, point.z),
+                new Vector3(point.x - shaftHalfWidth, baseY, point.z), color);
+            UGL.DrawTriangle(vh,
+                new Vector3(point.x - headHalfWidth, baseY, point.z),
+                new Vector3(point.x + headHalfWidth, baseY, point.z),
+                new Vector3(point.x, tipY, point.z), color);
+        }
+
+        private void SetHistorySummary(HistoryCurveFrame71.Sample sample)
+        {
+            if (historySummaryText == null) return;
+            int minutes = Mathf.Max(0, sample.recordIndex - 1) * 2;
+            string selectedDate = dateSelector != null && dateSelector.selectedDisplayText != null
+                ? dateSelector.selectedDisplayText.text.Trim() : string.Empty;
+            int actualVoltage = GetActualVoltage(sample);
+            float baseFeedSeconds = GetBaseFeedSeconds(sample);
+            float actualFeedSeconds = GetActualFeedSeconds(sample);
+            historySummaryText.text =
+                $"时间 {selectedDate} {minutes / 60:D2}:{minutes % 60:D2}　设定 {FormatVoltage(sample.setVoltage)}　" +
+                $"实际 {FormatVoltage(actualVoltage)}　电流 {sample.seriesCurrent / 10f:F1}kA\n" +
+                $"针振 {sample.fluctuation}mV　摆动 {sample.swing}mV　" +
+                $"基准间隔 {FormatSeconds(baseFeedSeconds)}　实际间隔 {FormatSeconds(actualFeedSeconds)}";
+        }
+
+        private static string FormatVoltage(int millivolts) =>
+            millivolts > 0 ? $"{millivolts / 1000f:F3}V" : "--";
+
+        private static string FormatSeconds(float seconds) =>
+            seconds >= 0f ? $"{seconds:F1}s" : "--";
+
+        private void SetEventLegend(Color specialColor, Color aeColor, Color autoColor, Color manualColor,
+            Color aebColor, Color additiveColor)
+        {
+            if (eventLegendText == null) return;
+            eventLegendText.text =
+                $"{LegendToken(specialColor, "●抬母线　●出铝　●换极")}　{LegendToken(aeColor, "●效应")}　{LegendToken(manualColor, "●纯手动")}\n" +
+                $"{LegendToken(autoColor, "●自动下料")}　{LegendToken(manualColor, "●手动下料")}　" +
+                $"{LegendToken(aebColor, "●自动AEB")}　{LegendToken(manualColor, "●手动AEB")}　" +
+                $"{LegendToken(additiveColor, "●自动加氟")}　{LegendToken(manualColor, "●手动加氟")}\n" +
+                $"{LegendToken(autoColor, "↑自动提极　↓自动降极")}　" +
+                LegendToken(manualColor, "↑手动提极　↓手动降极");
+        }
+
+        private static string LegendToken(Color color, string text) =>
+            $"<color=#{ColorUtility.ToHtmlStringRGB(color)}>{text}</color>";
 
         // ==================== 模拟数据 ====================
         private void RenderMockData()
