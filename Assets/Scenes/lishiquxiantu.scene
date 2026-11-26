@@ -4167,7 +4167,7 @@ MonoBehaviour:
   maxScale: 3
   scrollWheelSpeed: 0.1
   rmbDragZoomSpeed: 0.006
-  showInputDebug: 1
+  showInputDebug: 0
 --- !u!1 &844017725
 GameObject:
   m_ObjectHideFlags: 0

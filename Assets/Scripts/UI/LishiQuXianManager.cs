@@ -39,6 +39,10 @@ namespace Aeht.UI
         private TextMeshProUGUI statusText;
         private TextMeshProUGUI historySummaryText;
         private TextMeshProUGUI eventLegendText;
+        private Tooltip historyTooltip;
+        private readonly Dictionary<int, HistoryCurveFrame71.Sample> historySamplesByRecord =
+            new Dictionary<int, HistoryCurveFrame71.Sample>();
+        private int lastSummaryRecordIndex = -1;
         private GlobalElectrolyticCellDataManager slotConfigManager;
 
         private struct AnodeMarker
@@ -267,6 +271,9 @@ namespace Aeht.UI
             legend.show = false;
             if (historySummaryText != null) historySummaryText.text = string.Empty;
             if (eventLegendText != null) eventLegendText.text = string.Empty;
+            historySamplesByRecord.Clear();
+            lastSummaryRecordIndex = -1;
+            if (historyTooltip != null) historyTooltip.SetActive(false);
             historyChart.RefreshChart();
         }
 
@@ -355,8 +362,10 @@ namespace Aeht.UI
         // line up with the original chart.
         private void RenderHistory(List<HistoryCurveFrame71.Sample> samples)
         {
-            var byIndex = new Dictionary<int, HistoryCurveFrame71.Sample>();
-            foreach (var sample in samples) byIndex[sample.recordIndex] = sample;
+            historySamplesByRecord.Clear();
+            foreach (var sample in samples) historySamplesByRecord[sample.recordIndex] = sample;
+            var byIndex = historySamplesByRecord;
+            lastSummaryRecordIndex = -1;
 
             var chart = historyChart;
             chart.RemoveData();
@@ -403,9 +412,16 @@ namespace Aeht.UI
             ApplyFont(secondaryLegend.labelStyle.textStyle);
 
             var tooltip = chart.EnsureChartComponent<Tooltip>();
+            historyTooltip = tooltip;
             tooltip.show = true;
             tooltip.type = Tooltip.Type.Line;
             tooltip.trigger = Tooltip.Trigger.Axis;
+            tooltip.titleFormatter = $"{GetSelectedDateDisplay()} {{b}}";
+            tooltip.itemFormatter = "{.}|{a}|{c}";
+            tooltip.numericFormatter = string.Empty;
+            // Missing samples and inactive event rows must not appear as a
+            // misleading zero in the axis tooltip.
+            tooltip.ignoreDataDefaultContent = string.Empty;
 
             var grid = chart.EnsureChartComponent<GridCoord>();
             grid.show = true;
@@ -478,17 +494,20 @@ namespace Aeht.UI
             Color actualFeedColor = new Color32(177, 111, 255, 255);
             Color baseFeedColor = new Color32(113, 221, 132, 255);
 
-            AddHistoryLine(chart, "实时电流", 1, currentColor, 1.4f);
-            AddHistoryLine(chart, "实时电压", 0, actualVoltageColor, 1.8f);
-            AddHistoryLine(chart, "滤波电压", 0, filteredVoltageColor, 2.2f);
-            AddHistoryLine(chart, "折合电压", 0, standardVoltageColor, 1.4f);
-            AddHistoryLine(chart, "平滑电压", 0, smoothedVoltageColor, 1.2f);
-            AddHistoryLine(chart, "设定电压", 0, setVoltageColor, 1.1f, LineStyle.Type.Dashed);
-            AddHistoryLine(chart, "电压上限", 0, limitColor, 1f, LineStyle.Type.Dashed);
-            AddHistoryLine(chart, "电压下限", 0, limitColor, 1f, LineStyle.Type.Dashed);
-            AddHistoryLine(chart, "实际下料间隔", 1, actualFeedColor, 1.5f,
+            AddHistoryLine(chart, "实时电流", 1, currentColor, 1.4f, "{.}|{a}|{c:F1} kA");
+            AddHistoryLine(chart, "实时电压", 0, actualVoltageColor, 1.8f, "{.}|{a}|{c:F0} mV");
+            AddHistoryLine(chart, "滤波电压", 0, filteredVoltageColor, 2.2f, "{.}|{a}|{c:F0} mV");
+            AddHistoryLine(chart, "折合电压", 0, standardVoltageColor, 1.4f, "{.}|{a}|{c:F0} mV");
+            AddHistoryLine(chart, "平滑电压", 0, smoothedVoltageColor, 1.2f, "{.}|{a}|{c:F0} mV");
+            AddHistoryLine(chart, "设定电压", 0, setVoltageColor, 1.1f, "{.}|{a}|{c:F0} mV",
+                LineStyle.Type.Dashed);
+            AddHistoryLine(chart, "电压上限", 0, limitColor, 1f, "{.}|{a}|{c:F0} mV",
+                LineStyle.Type.Dashed);
+            AddHistoryLine(chart, "电压下限", 0, limitColor, 1f, "{.}|{a}|{c:F0} mV",
+                LineStyle.Type.Dashed);
+            AddHistoryLine(chart, "实际下料间隔", 1, actualFeedColor, 1.5f, "{.}|{a}|{c:F1} s",
                 LineStyle.Type.Solid, LineType.StepMiddle);
-            AddHistoryLine(chart, "基准下料间隔", 1, baseFeedColor, 1.2f,
+            AddHistoryLine(chart, "基准下料间隔", 1, baseFeedColor, 1.2f, "{.}|{a}|{c:F1} s",
                 LineStyle.Type.Dashed, LineType.StepMiddle);
 
             Color specialColor = new Color32(255, 183, 61, 255);
@@ -567,7 +586,8 @@ namespace Aeht.UI
         }
 
         private static void AddHistoryLine(LineChart chart, string title, int axis, Color color, float width,
-            LineStyle.Type style = LineStyle.Type.Solid, LineType lineType = LineType.Normal)
+            string tooltipFormatter, LineStyle.Type style = LineStyle.Type.Solid,
+            LineType lineType = LineType.Normal)
         {
             var series = chart.AddSerie<Line>(title);
             series.yAxisIndex = axis;
@@ -575,6 +595,7 @@ namespace Aeht.UI
             series.lineStyle.type = style;
             series.lineStyle.color = color;
             series.itemStyle.color = color;
+            series.itemStyle.itemFormatter = tooltipFormatter;
             series.lineType = lineType;
             series.symbol.show = false;
             series.animation.enable = false;
@@ -621,13 +642,21 @@ namespace Aeht.UI
 
         private static void AddEventMarkerSerie(LineChart chart, string title, Color color)
         {
-            var series = chart.AddSerie<Scatter>(title);
+            // Use a symbol-only Line serie instead of Scatter. XCharts' Scatter
+            // handler overwrites an axis tooltip title with the serie name and
+            // exposes the artificial Y position used to stack event rows.
+            var series = chart.AddSerie<Line>(title);
             series.yAxisIndex = 0;
+            series.lineStyle.width = 0f;
+            series.lineStyle.color = Color.clear;
             series.symbol.show = true;
             series.symbol.type = SymbolType.Circle;
             series.symbol.size = 5f;
             series.symbol.color = color;
             series.itemStyle.color = color;
+            // Inactive points are ignored by the empty tooltip default above;
+            // active points show their semantic state without a fake voltage.
+            series.itemStyle.itemFormatter = "{.}|{a}|发生";
             series.animation.enable = false;
         }
 
@@ -704,8 +733,7 @@ namespace Aeht.UI
         {
             if (historySummaryText == null) return;
             int minutes = Mathf.Max(0, sample.recordIndex - 1) * 2;
-            string selectedDate = dateSelector != null && dateSelector.selectedDisplayText != null
-                ? dateSelector.selectedDisplayText.text.Trim() : string.Empty;
+            string selectedDate = GetSelectedDateDisplay();
             int actualVoltage = GetActualVoltage(sample);
             float baseFeedSeconds = GetBaseFeedSeconds(sample);
             float actualFeedSeconds = GetActualFeedSeconds(sample);
@@ -716,6 +744,44 @@ namespace Aeht.UI
                 $"<color=#EB36CD><b>电流</b></color> {sample.seriesCurrent / 10f:F1}kA\n" +
                 $"针振 {sample.fluctuation}mV　摆动 {sample.swing}mV　" +
                 $"基准 {FormatSeconds(baseFeedSeconds)}　实际 {FormatSeconds(actualFeedSeconds)}";
+            lastSummaryRecordIndex = sample.recordIndex;
+        }
+
+        private string GetSelectedDateDisplay()
+        {
+            string selectedDate = dateSelector != null && dateSelector.selectedDisplayText != null
+                ? dateSelector.selectedDisplayText.text.Trim() : string.Empty;
+            string compact = selectedDate.Replace("-", string.Empty).Replace("/", string.Empty);
+            if (DateTime.TryParseExact(compact, "yyyyMMdd",
+                    System.Globalization.CultureInfo.InvariantCulture,
+                    System.Globalization.DateTimeStyles.None, out var parsed))
+                return parsed.ToString("yyyy-MM-dd");
+            return selectedDate;
+        }
+
+        private void LateUpdate()
+        {
+            if (useMockData || historyTooltip == null || !historyTooltip.IsActive() ||
+                historySamplesByRecord.Count == 0)
+                return;
+
+            var parameters = historyTooltip.context?.data?.param;
+            if (parameters == null) return;
+            foreach (var parameter in parameters)
+            {
+                // The first ten series are the measured curves. Event series
+                // share the same X index but are deliberately not used to pick
+                // the detail record.
+                if (parameter.serieIndex < 0 || parameter.serieIndex >= 10 ||
+                    parameter.serieData == null || parameter.serieData.ignore)
+                    continue;
+
+                int recordIndex = parameter.serieData.index + 1;
+                if (recordIndex != lastSummaryRecordIndex &&
+                    historySamplesByRecord.TryGetValue(recordIndex, out var sample))
+                    SetHistorySummary(sample);
+                break;
+            }
         }
 
         private static string FormatVoltage(int millivolts) =>
@@ -1218,7 +1284,7 @@ namespace Aeht.UI
 
         // OnGUI：输入诊断 HUD + 兜底滚轮（仅当 Update 的 raw Input 都没读到滚动时才启用，
         // 避免同一帧被 Update 和 OnGUI 双重缩放）
-        [SerializeField] private bool showInputDebug = true; // 输入诊断 HUD 开关（调试完可关）
+        [SerializeField] private bool showInputDebug = false; // 输入诊断 HUD 开关（调试完可关）
         private bool m_DiagOnGuiOnce = true;
         private void OnGUI()
         {
